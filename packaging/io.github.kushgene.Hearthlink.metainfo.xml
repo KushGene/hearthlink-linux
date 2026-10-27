@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.kushgene.Hearthlink</id>
+  <name>Hearthlink</name>
+  <summary>World of Warcraft data uploaders for Linux</summary>
+  <developer id="io.github.kushgene">
+    <name>KushGene</name>
+  </developer>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>
+      Hearthlink does on Linux what the Windows uploaders of several World of Warcraft
+      fan sites do, in one app with a tray icon:
+    </p>
+    <ul>
+      <li>Wowhead: uploads the game caches and Wowhead Looter data and keeps the Looter addon up to date (like the Wowhead Client)</li>
+      <li>WowUtils: sends your character data, brings your raid group's wishlists into the game and sends RCLootCouncil loot history (like the WowUtils Bridge)</li>
+      <li>ForeverDB: installs, updates and runs ForeverDB's official Linux uploader</li>
+      <li>wowaudit: brings your team's wishlists into the game and sends loot history and companion data (like the wowaudit desktop client)</li>
+    </ul>
+    <p>
+      It finds your game in Lutris, Wine, Bottles and Steam/Proton folders, and tells you when
+      one of the original Windows apps gets a version this port doesn't know yet.
+    </p>
+    <p>
+      Hearthlink is a community project, not made by or affiliated with Blizzard Entertainment,
+      Wowhead, WowUtils, wowaudit or ForeverDB.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.kushgene.Hearthlink.desktop</launchable>
+  <icon type="stock">io.github.kushgene.Hearthlink</icon>
+  <url type="homepage">https://github.com/KushGene/hearthlink-linux</url>
+  <url type="bugtracker">https://github.com/KushGene/hearthlink-linux/issues</url>
+  <url type="vcs-browser">https://github.com/KushGene/hearthlink-linux</url>
+  <categories>
+    <category>Game</category>
+    <category>Utility</category>
+  </categories>
+  <keywords>
+    <keyword>World of Warcraft</keyword>
+    <keyword>Wowhead</keyword>
+    <keyword>WowUtils</keyword>
+    <keyword>wowaudit</keyword>
+    <keyword>ForeverDB</keyword>
+    <keyword>uploader</keyword>
+  </keywords>
+  <provides>
+    <binary>hearthlink</binary>
+  </provides>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <requires>
+    <internet>always</internet>
+  </requires>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="1.0.0" date="2026-10-27">
+      <description>
+        <p>First release: Wowhead, WowUtils (with heartbeat and RCLootCouncil loot history), wowaudit and ForeverDB.</p>
+      </description>
+    </release>
+  </releases>
+</component>

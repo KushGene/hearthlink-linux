@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Hearthlink
+GenericName=WoW Data Uploader
+Comment=Uploads World of Warcraft addon data to Wowhead, WowUtils, wowaudit and ForeverDB
+Exec=hearthlink
+Icon=io.github.kushgene.Hearthlink
+Terminal=false
+Categories=Game;
+Keywords=wow;warcraft;wowhead;wowutils;wowaudit;foreverdb;uploader;addon;
+StartupNotify=true
+StartupWMClass=io.github.kushgene.Hearthlink

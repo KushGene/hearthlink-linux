@@ -1,0 +1,43 @@
+# Flatpak build. CI generates cargo-sources.json from Cargo.lock with
+# flatpak-cargo-generator.py, so the build runs offline.
+id: io.github.kushgene.Hearthlink
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: hearthlink
+finish-args:
+  - --share=network
+  - --share=ipc
+  # X11 so the window can hide to the tray (Wayland only allows minimizing).
+  - --socket=x11
+  - --socket=wayland
+  - --device=dri
+  # The game, Wine/Lutris/Bottles/Steam prefixes and addon folders live in $HOME.
+  - --filesystem=home
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=org.freedesktop.Notifications
+  # Sees whether WoW is running (the sandbox can't see host processes).
+  - --talk-name=org.freedesktop.Flatpak
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/hearthlink/cargo
+    CARGO_NET_OFFLINE: 'true'
+modules:
+  - name: hearthlink
+    buildsystem: simple
+    build-commands:
+      - cargo --offline build --release
+      - install -Dm755 target/release/hearthlink /app/bin/hearthlink
+      - install -Dm644 packaging/io.github.kushgene.Hearthlink.desktop /app/share/applications/io.github.kushgene.Hearthlink.desktop
+      - install -Dm644 packaging/io.github.kushgene.Hearthlink.metainfo.xml /app/share/metainfo/io.github.kushgene.Hearthlink.metainfo.xml
+      - install -Dm644 assets/icons/app.png /app/share/icons/hicolor/512x512/apps/io.github.kushgene.Hearthlink.png
+    sources:
+      - type: dir
+        path: ..
+        skip:
+          - target
+          - .flatpak-builder
+      - cargo-sources.json

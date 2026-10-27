@@ -1,0 +1,72 @@
+[package]
+name = "hearthlink"
+version = "1.0.0"
+edition = "2021"
+description = "Linux uploader for World of Warcraft addon data: Wowhead, WowUtils, wowaudit and ForeverDB in one app"
+license = "MIT"
+authors = ["KushGene"]
+homepage = "https://github.com/KushGene/hearthlink-linux"
+readme = "README.md"
+repository = "https://github.com/KushGene/hearthlink-linux"
+
+[dependencies]
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "links"] }
+egui_extras = { version = "0.37", features = ["image"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+ksni = { version = "0.3", features = ["blocking"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls", "gzip", "multipart", "query", "form"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+flate2 = "1"
+md-5 = "0.11"
+sha1 = "0.11"
+sha2 = "0.11"
+base64 = "0.23"
+regex = "1"
+dirs = "7"
+open = "5"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+notify-rust = "4"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+rand = "0.9"
+anyhow = "1"
+hex = "0.4"
+tar = "0.4"
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+
+# `cargo generate-rpm` (Fedora, openSUSE, …); the binary is built first with `cargo build --release`.
+[package.metadata.generate-rpm]
+name = "hearthlink"
+summary = "World of Warcraft data uploaders for Linux"
+url = "https://github.com/KushGene/hearthlink-linux"
+vendor = "KushGene"
+assets = [
+    { source = "target/release/hearthlink", dest = "/usr/bin/hearthlink", mode = "755" },
+    { source = "packaging/io.github.kushgene.Hearthlink.desktop", dest = "/usr/share/applications/io.github.kushgene.Hearthlink.desktop", mode = "644" },
+    { source = "packaging/io.github.kushgene.Hearthlink.metainfo.xml", dest = "/usr/share/metainfo/io.github.kushgene.Hearthlink.metainfo.xml", mode = "644" },
+    { source = "target/icons/512/io.github.kushgene.Hearthlink.png", dest = "/usr/share/icons/hicolor/512x512/apps/io.github.kushgene.Hearthlink.png", mode = "644" },
+    { source = "target/icons/256/io.github.kushgene.Hearthlink.png", dest = "/usr/share/icons/hicolor/256x256/apps/io.github.kushgene.Hearthlink.png", mode = "644" },
+    { source = "target/icons/128/io.github.kushgene.Hearthlink.png", dest = "/usr/share/icons/hicolor/128x128/apps/io.github.kushgene.Hearthlink.png", mode = "644" },
+    { source = "target/icons/64/io.github.kushgene.Hearthlink.png", dest = "/usr/share/icons/hicolor/64x64/apps/io.github.kushgene.Hearthlink.png", mode = "644" },
+]
+
+# `cargo deb` (Debian, Ubuntu, Mint, …).
+[package.metadata.deb]
+maintainer = "KushGene"
+section = "games"
+priority = "optional"
+extended-description = "One app with a tray icon for the World of Warcraft data uploaders: Wowhead, WowUtils, wowaudit and ForeverDB."
+assets = [
+    ["target/release/hearthlink", "usr/bin/", "755"],
+    ["packaging/io.github.kushgene.Hearthlink.desktop", "usr/share/applications/", "644"],
+    ["packaging/io.github.kushgene.Hearthlink.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["target/icons/512/io.github.kushgene.Hearthlink.png", "usr/share/icons/hicolor/512x512/apps/", "644"],
+    ["target/icons/256/io.github.kushgene.Hearthlink.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
+    ["target/icons/128/io.github.kushgene.Hearthlink.png", "usr/share/icons/hicolor/128x128/apps/", "644"],
+    ["target/icons/64/io.github.kushgene.Hearthlink.png", "usr/share/icons/hicolor/64x64/apps/", "644"],
+]

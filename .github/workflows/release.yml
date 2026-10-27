@@ -1,0 +1,93 @@
+# Builds every package when a version tag (v1.2.3) is pushed and attaches them to the
+# GitHub release. Hearthlink's update check reads that release.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  packages:
+    # The oldest supported Ubuntu, so the binary runs on older glibc versions too.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check that the tag matches Cargo.toml
+        run: |
+          v="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          test "v$v" = "$GITHUB_REF_NAME" || { echo "Tag $GITHUB_REF_NAME but Cargo.toml says $v"; exit 1; }
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+      - name: Build
+        run: |
+          sudo apt-get update && sudo apt-get install -y imagemagick
+          cargo build --release --locked
+          sh packaging/icons.sh
+      - name: tar.gz with install.sh
+        run: |
+          d="hearthlink-$VERSION-x86_64"
+          mkdir -p "$d/icons"
+          cp target/release/hearthlink packaging/install.sh packaging/uninstall.sh README.md LICENSE "$d/"
+          cp packaging/io.github.kushgene.Hearthlink.desktop packaging/io.github.kushgene.Hearthlink.metainfo.xml "$d/"
+          for s in 512 256 128 64; do mkdir -p "$d/icons/$s"; cp "target/icons/$s/io.github.kushgene.Hearthlink.png" "$d/icons/$s/"; done
+          tar czf "target/$d.tar.gz" "$d"
+      - name: .deb and .rpm
+        run: |
+          cargo install cargo-deb cargo-generate-rpm --locked
+          # No dots before the extension: Discover names a local package file after the
+          # part up to the first dot ("hearthlink-0" for hearthlink-0.1.0-1.x86_64.rpm).
+          cargo deb --no-build --output "target/Hearthlink.amd64.deb"
+          cargo generate-rpm --output "target/Hearthlink.x86_64.rpm"
+      - name: AppImage
+        run: |
+          sudo apt-get install -y libfuse2
+          wget -q -O /usr/local/bin/appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          sudo chmod +x /usr/local/bin/appimagetool
+          sh packaging/build-appimage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: |
+            target/*.tar.gz
+            target/*.deb
+            target/*.rpm
+            target/*.AppImage
+
+  flatpak:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - name: Vendor the Rust crates for the offline build
+        run: |
+          pip install --break-system-packages aiohttp tomlkit || pip install aiohttp tomlkit
+          curl -sSLo /tmp/gen.py https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+          python3 /tmp/gen.py Cargo.lock -o packaging/cargo-sources.json
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: Hearthlink.flatpak
+          manifest-path: packaging/io.github.kushgene.Hearthlink.yml
+          cache-key: flatpak-${{ github.sha }}
+
+  release:
+    needs: [packages, flatpak]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Name the Flatpak bundle after the version
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          f="$(find dist -name '*.flatpak' | head -1)"
+          [ -n "$f" ] && mv "$f" "dist/Hearthlink-$v-x86_64.flatpak" || true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
