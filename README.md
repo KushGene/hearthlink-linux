@@ -22,6 +22,13 @@ When one of the Windows apps gets a newer version than the one Hearthlink was bu
 the app tells you, since that version may send things Hearthlink doesn't know about yet.
 Hearthlink also tells you when a new Hearthlink release is out.
 
+## Screenshots
+
+<p align="center">
+  <img src="assets/screenshots/overview.png" width="49%" alt="Overview: status of all four services">
+  <img src="assets/screenshots/wowhead.png" width="49%" alt="Wowhead page: upload status per game version and options">
+</p>
+
 ## Install
 
 Download the file for your system from the

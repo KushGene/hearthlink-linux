@@ -29,6 +29,16 @@
     </p>
   </description>
   <launchable type="desktop-id">io.github.kushgene.Hearthlink.desktop</launchable>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Overview of all services</caption>
+      <image type="source" width="984" height="716">https://raw.githubusercontent.com/KushGene/hearthlink-linux/main/assets/screenshots/overview.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Wowhead uploads per game version</caption>
+      <image type="source" width="1146" height="947">https://raw.githubusercontent.com/KushGene/hearthlink-linux/main/assets/screenshots/wowhead.png</image>
+    </screenshot>
+  </screenshots>
   <icon type="stock">io.github.kushgene.Hearthlink</icon>
   <url type="homepage">https://github.com/KushGene/hearthlink-linux</url>
   <url type="bugtracker">https://github.com/KushGene/hearthlink-linux/issues</url>
