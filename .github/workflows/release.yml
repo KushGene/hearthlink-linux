@@ -14,7 +14,7 @@ jobs:
     # The oldest supported Ubuntu, so the binary runs on older glibc versions too.
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Check that the tag matches Cargo.toml
         run: |
@@ -47,7 +47,7 @@ jobs:
           wget -q -O /usr/local/bin/appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           sudo chmod +x /usr/local/bin/appimagetool
           sh packaging/build-appimage.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: packages
           path: |
@@ -57,18 +57,18 @@ jobs:
             target/*.AppImage
 
   flatpak:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
       options: --privileged
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Vendor the Rust crates for the offline build
         run: |
           pip install --break-system-packages aiohttp tomlkit || pip install aiohttp tomlkit
           curl -sSLo /tmp/gen.py https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
           python3 /tmp/gen.py Cargo.lock -o packaging/cargo-sources.json
-      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6.8
         with:
           bundle: Hearthlink.flatpak
           manifest-path: packaging/io.github.kushgene.Hearthlink.yml
@@ -76,9 +76,9 @@ jobs:
 
   release:
     needs: [packages, flatpak]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -87,7 +87,7 @@ jobs:
           v="${GITHUB_REF_NAME#v}"
           f="$(find dist -name '*.flatpak' | head -1)"
           [ -n "$f" ] && mv "$f" "dist/Hearthlink-$v-x86_64.flatpak" || true
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true

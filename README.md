@@ -13,6 +13,11 @@ distribution, with the game running through Lutris, Wine, Bottles or Steam/Proto
 | **ForeverDB** | Installs, updates and runs ForeverDB's official Linux uploader (WoW Forever) | ForeverDB Uploader |
 | **wowaudit** | Writes your team's wishlists into RCLootCouncil (wowaudit module) / SimpleLootCouncil; sends RCLootCouncil loot history and WowauditCompanion data | wowaudit desktop client |
 
+> **About wowaudit:** I don't use wowaudit myself, so this part is untested on my side: it was
+> built from how the wowaudit desktop client works and checked against wowaudit's API where
+> that was possible without a team, and I hope it works. If you use wowaudit, I'd be glad to
+> hear whether it does (see [Bugs and wishes](#bugs-and-wishes)).
+
 When one of the Windows apps gets a newer version than the one Hearthlink was built from,
 the app tells you, since that version may send things Hearthlink doesn't know about yet.
 Hearthlink also tells you when a new Hearthlink release is out.
@@ -80,6 +85,13 @@ cargo build --release          # current stable Rust; needs no system libraries 
 Packages: `packaging/icons.sh`, then `cargo deb --no-build`, `cargo generate-rpm`,
 `packaging/build-appimage.sh`; Flatpak via `packaging/io.github.kushgene.Hearthlink.yml`.
 `.github/workflows/release.yml` builds all of them when a `v*` tag is pushed.
+
+## Bugs and wishes
+
+Found a bug, or something doesn't work the way the Windows app does? Is there a service or
+uploader you'd like Hearthlink to support? Please
+[open an issue](https://github.com/KushGene/hearthlink-linux/issues/new). For bugs, the app's
+log (the service's page in Hearthlink) and your distribution help a lot.
 
 ## Disclaimer
 
