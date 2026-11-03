@@ -2,8 +2,8 @@
 
 # Hearthlink: WoW data uploader for Linux
 
-**Looking for the Wowhead Client, the WowUtils Bridge, the wowaudit client or the ForeverDB
-Uploader on Linux?** Hearthlink does their job in one app with a tray icon, on any Linux
+**Looking for the Wowhead Client, the WowUtils Bridge, the wowaudit client, the ForeverDB
+Uploader or the ForeverWowCraft Helper on Linux?** Hearthlink does their job in one app with a tray icon, on any Linux
 distribution, with the game running through Lutris, Wine, Bottles or Steam/Proton.
 
 | Service | What Hearthlink does | Windows app it replaces |
@@ -11,6 +11,7 @@ distribution, with the game running through Lutris, Wine, Bottles or Steam/Proto
 | **Wowhead** | Uploads the game caches and Wowhead Looter data; keeps the Looter addon up to date | Wowhead Client |
 | **WowUtils** | Sends your character data; writes your raid groups' wishlists and droptimizers into the game; sends RCLootCouncil's loot history to groups that take it | WowUtils Bridge |
 | **ForeverDB** | Installs, updates and runs ForeverDB's official Linux uploader (WoW Forever) | ForeverDB Uploader |
+| **ForeverWowCraft** | Installs, updates and runs the official ForeverWowCraft Helper (WoW Forever): sends the auction prices the addon saves, writes your profession routes into the game, keeps the addon installed | ForeverWowCraft Helper |
 | **wowaudit** | Writes your team's wishlists into RCLootCouncil (wowaudit module) / SimpleLootCouncil; sends RCLootCouncil loot history and WowauditCompanion data | wowaudit desktop client |
 
 > **About wowaudit:** I don't use wowaudit myself, so this part is untested on my side: it was
@@ -56,18 +57,34 @@ Arch Linux: use the Flatpak, the AppImage or the tar.gz.
    in the tray and uploads after you play.
 
 If the Windows Wowhead Client or WowUtils Bridge already ran in a Wine prefix, Hearthlink
-takes over its login, upload history and raid group choice (wishlists and loot history).
+takes over its login, upload history and raid group choice (wishlists and loot history). The
+same goes for the ForeverWowCraft Helper: Hearthlink takes over its sender name, what it sent
+and the routes, so it carries on under the same name.
 
 ## Addons
 
 - **Wowhead Looter**: installed and kept up to date by Hearthlink (checked every 6 hours,
   never while the game runs).
 - **ForeverDB addons**: installed and kept up to date by ForeverDB's uploader.
+- **ForeverWowCraft Scanner and Plans**: installed and kept up to date by the ForeverWowCraft
+  Helper (a scanner that CurseForge updated to a newer version is left alone).
 - **wowutils_data**: written by Hearthlink (your raid groups' data).
 - **WowUtils**: install it with an addon manager (CurseForge, WowUp, Wago App); Hearthlink
   shows a hint when it's missing.
 - **RCLootCouncil** (optional): its loot history goes to the raid groups you tick under
   WowUtils → Loot history, if a group admin allowed importing for the group.
+
+## ForeverWowCraft and Python
+
+The [ForeverWowCraft Helper](https://github.com/ForeverWowCraft/ForeverWowCraft-Helper) is open
+source Python (MIT) and runs on Linux as it is. Hearthlink downloads the official release from
+GitHub, checks it against the SHA-256 GitHub lists for it, updates it when a new one is out
+(checked every 6 hours) and runs it with your system's Python 3.10 or newer. Only its Windows
+parts (tray icon, autostart, folder picker) are Hearthlink's. The Flatpak brings Python along;
+the rpm and deb depend on `python3`; for the AppImage and the tar.gz, `python3` has to be
+installed (it is on almost every distribution). Its state is in
+`~/.local/share/hearthlink/foreverwowcraft`. The service is off until you turn it on, unless a
+Windows helper was found in a Wine prefix.
 
 ## Update
 
@@ -103,7 +120,10 @@ log (the service's page in Hearthlink) and your distribution help a lot.
 ## Disclaimer
 
 Hearthlink is a community project. It is not made by, endorsed by or affiliated with
-Blizzard Entertainment, Wowhead, WowUtils, wowaudit or ForeverDB. World of Warcraft is a
-trademark of Blizzard Entertainment. Icons: [Phosphor](https://phosphoricons.com) (MIT).
+Blizzard Entertainment, Wowhead, WowUtils, wowaudit, ForeverDB or ForeverWowCraft. World of
+Warcraft is a trademark of Blizzard Entertainment. Icons: [Phosphor](https://phosphoricons.com)
+(MIT). The ForeverWowCraft logo belongs to ForeverWowCraft and is used to show which service a
+page is about. The ForeverWowCraft Helper and its addons (MIT, (c) 2026 ForeverWowCraft) are not
+part of Hearthlink: Hearthlink downloads the official release.
 
 License: MIT

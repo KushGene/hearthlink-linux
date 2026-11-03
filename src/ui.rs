@@ -570,7 +570,7 @@ impl App {
         if m.runs_official {
             ui.add_space(4.0);
             ui.label(
-                RichText::new(ib(icon::CHECK, &format!("Runs the official {} for Linux, kept up to date automatically", m.upstream_app)))
+                RichText::new(ib(icon::CHECK, &format!("Runs the official {}, kept up to date automatically", m.upstream_app)))
                     .small()
                     .color(health_color(Health::Ok)),
             );
@@ -769,7 +769,7 @@ impl App {
             });
             ui.label(
                 RichText::new(format!(
-                    "Hearthlink {} · not made by or affiliated with ForeverDB, Wowhead, WowUtils or wowaudit.",
+                    "Hearthlink {} · not made by or affiliated with ForeverDB, ForeverWowCraft, Wowhead, WowUtils or wowaudit.",
                     env!("CARGO_PKG_VERSION")
                 ))
                 .small()

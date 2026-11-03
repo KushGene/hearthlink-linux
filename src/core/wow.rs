@@ -59,6 +59,17 @@ impl Flavor {
     }
 }
 
+/// True for a WoW Forever game folder: `_forever_`, or a classic folder running a 1.60+ client
+/// (the Forever beta ran in `_classic_beta_`).
+pub fn is_forever(f: &Flavor) -> bool {
+    if f.folder.contains("forever") {
+        return true;
+    }
+    let v = f.executable().and_then(|e| exe_file_version(&e)).unwrap_or_default();
+    let mut p = v.split('.').map(|x| x.parse::<u32>().unwrap_or(0));
+    p.next() == Some(1) && p.next().unwrap_or(0) >= 60
+}
+
 pub fn flavor_display(folder: &str) -> String {
     match folder {
         "_retail_" => "Retail".into(),

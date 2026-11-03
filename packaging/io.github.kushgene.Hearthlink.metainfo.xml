@@ -17,6 +17,7 @@
       <li>Wowhead: uploads the game caches and Wowhead Looter data and keeps the Looter addon up to date (like the Wowhead Client)</li>
       <li>WowUtils: sends your character data, brings your raid group's wishlists into the game and sends RCLootCouncil loot history (like the WowUtils Bridge)</li>
       <li>ForeverDB: installs, updates and runs ForeverDB's official Linux uploader</li>
+      <li>ForeverWowCraft: installs, updates and runs the official ForeverWowCraft Helper, which sends auction prices and writes profession routes into the game</li>
       <li>wowaudit: brings your team's wishlists into the game and sends loot history and companion data (like the wowaudit desktop client)</li>
     </ul>
     <p>
@@ -25,7 +26,7 @@
     </p>
     <p>
       Hearthlink is a community project, not made by or affiliated with Blizzard Entertainment,
-      Wowhead, WowUtils, wowaudit or ForeverDB.
+      Wowhead, WowUtils, wowaudit, ForeverDB or ForeverWowCraft.
     </p>
   </description>
   <launchable type="desktop-id">io.github.kushgene.Hearthlink.desktop</launchable>
@@ -53,6 +54,7 @@
     <keyword>WowUtils</keyword>
     <keyword>wowaudit</keyword>
     <keyword>ForeverDB</keyword>
+    <keyword>ForeverWowCraft</keyword>
     <keyword>uploader</keyword>
   </keywords>
   <provides>
@@ -67,6 +69,12 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.1.0" date="2026-11-03">
+      <description>
+        <p>New: ForeverWowCraft. Hearthlink installs, updates and runs the official ForeverWowCraft Helper, which sends the auction prices its addon saves and writes your profession routes into the game. A Windows helper in a Wine or Proton prefix is taken over with its sender name.</p>
+        <p>The rpm and deb packages now depend on python3 (3.10 or newer).</p>
+      </description>
+    </release>
     <release version="1.0.0" date="2026-10-27">
       <description>
         <p>First release: Wowhead, WowUtils (with heartbeat and RCLootCouncil loot history), wowaudit and ForeverDB.</p>

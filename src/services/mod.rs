@@ -1,4 +1,5 @@
 pub mod foreverdb;
+pub mod foreverwowcraft;
 pub mod wowaudit;
 pub mod wowhead;
 pub mod wowutils;
@@ -43,6 +44,7 @@ pub trait Service: Send + Sync {
 pub fn all(env: &Arc<Env>) -> Vec<Arc<dyn Service>> {
     vec![
         Arc::new(foreverdb::ForeverDb::new(env.clone())),
+        Arc::new(foreverwowcraft::ForeverWowCraft::new(env.clone())),
         Arc::new(wowhead::Wowhead::new(env.clone())),
         Arc::new(wowutils::WowUtils::new(env.clone())),
         Arc::new(wowaudit::WowAudit::new(env.clone())),

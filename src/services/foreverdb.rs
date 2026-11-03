@@ -111,18 +111,7 @@ impl Inner {
 
     /// The WoW Forever game folders: `_forever_`, or a classic folder running a 1.60+ client.
     fn forever_folders(&self) -> Vec<wow::Flavor> {
-        self.env
-            .flavors()
-            .into_iter()
-            .filter(|f| {
-                if f.folder.contains("forever") {
-                    return true;
-                }
-                let v = f.executable().and_then(|e| wow::exe_file_version(&e)).unwrap_or_default();
-                let mut p = v.split('.').map(|x| x.parse::<u32>().unwrap_or(0));
-                p.next() == Some(1) && p.next().unwrap_or(0) >= 60
-            })
-            .collect()
+        self.env.flavors().into_iter().filter(wow::is_forever).collect()
     }
 
     fn manifest(&self) -> anyhow::Result<serde_json::Value> {
