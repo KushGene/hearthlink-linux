@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 (2026-11-05)
 
 ### Wowhead: follows Wowhead Client 2.0.9801.37696
 

@@ -69,6 +69,12 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.2.0" date="2026-11-05">
+      <description>
+        <p>Wowhead follows Wowhead Client 2.0.9801.37696: in-game sync for WoW Forever. The Looter's Sync button sends your profile and character data to Wowhead while you play. It only runs while WoW Forever runs and you are logged in, and can be turned off in the options.</p>
+        <p>With character data off, or for an excluded account, uploads now also leave out the Looter's profile and character export data.</p>
+      </description>
+    </release>
     <release version="1.1.0" date="2026-11-03">
       <description>
         <p>New: ForeverWowCraft. Hearthlink installs, updates and runs the official ForeverWowCraft Helper, which sends the auction prices its addon saves and writes your profession routes into the game. A Windows helper in a Wine or Proton prefix is taken over with its sender name.</p>
