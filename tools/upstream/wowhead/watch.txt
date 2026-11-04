@@ -1,0 +1,27 @@
+# What src/services/wowhead.rs depends on in the Windows Wowhead Client.
+# A changed method matching one of these makes compare.py report verdict 2.
+# Format: type:|string:|ref: REGEX [=> where it lives in the port]
+# type: matches "Namespace.Type::Method/params" (also compiler-made <Foo>d__N types).
+
+type: \.Managers\.SyncManager\b|\.Managers\.Sync(Response|Outcome)\b => in-game sync: sync_tick, sync_file, sync_send, build_sync_body, post_sync, classify_sync, read_sync_answer
+type: \.Managers\.UploadManager\b|\.Data\.UploadMetadata\b => upload: Inner::upload, Inner::metadata, Inner::post
+type: \.Managers\.LoginManager\b => login: Inner::login, URL_NEW_CODE/URL_LOGIN/URL_CODE_STATUS
+type: \.Managers\.UpdateManager\b|\.Updates\.Structures\. => Looter update file: parse_update, token_branch, looter_files_for, Inner::update_looter
+type: \.Data\.(Wdb|WdbData\w*|WdbIdCache|WdbType|Wdbs)\b => WDB caches: read_wdb, load_wdbs, pack_wdb, WDB_FILES
+type: \.Data\.(DBCache|DBCaches|DBCacheManifest|CacheManifest)\b => DBCache.bin: read_dbcache, ignore_entry, load_dbcaches, pack_dbcache, upload cache (FLAG_*)
+type: \.Data\.(Luas|SavedVariablesParser|WowAccountData)\b => Looter SavedVariables: load_looter_files, split_top_level, remove_top_level, set_uploaded, CHARACTER_DATA_VARIABLES
+type: \.Constants\.(WowBranch|WowBranchExtensions)\b|\.Managers\.WowVersionManager\b => branches: BRANCHES, branch_for, family_main, SYNC_BRANCHES
+type: \.Misc\.(Urls|WowheadWebClient|Versions)\b|\.Constants\.WowheadClient\b => URL_* constants, user_agent(), request headers
+type: \.Settings\.(AccountSettings|GameSettings|ClientSettings|GdprSettings)\b => settings, excluded accounts, character data option, import_from_wine
+type: \.Managers\.WowProcessManager\b => src/core/wow.rs: game_running, running_games
+
+string: ^https?://www\.wowhead\.com/client => URL_* constants
+string: ^X-|^User-Agent$|^Content-Type$|^application/ => request headers / multipart parts
+string: \.lua(\.gz)?$|\.wdb$|\.bin$|_Sync\.|_SavedVariables\. => file names (LOOTER_SV, WDB_FILES, upload/sync part names)
+string: ^wl[A-Z]|Looter => Looter variables (CHARACTER_DATA_VARIABLES, ALWAYS_SENT, parse_sync_request)
+string: ^%WoW => token_branch (update file destinations)
+string: ^(en|es|de|fr|it|ko|pt|ru|zh)[A-Z]{2}$ => LOCALES
+string: metadata\.json|file\d => upload/sync multipart parts
+
+ref: System\.Net\.|HttpClient|WebClient|MultipartFormDataContent => HTTP calls
+ref: GZipStream|DeflateStream|MD5 => compression / hashes (md5, pack_*)

@@ -1,0 +1,50 @@
+# Checks once a day whether a ported upstream program has a new version, and if so
+# opens an issue with the brief from tools/upstream (what changed and where it lives
+# in the port). No LLM, no REA: an agent or a person takes it from the issue.
+name: Upstream watch
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  wowhead:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      - name: Check
+        id: check
+        run: tools/upstream/wowhead/check.sh | tee -a "$GITHUB_OUTPUT"
+        env:
+          HEARTHLINK_UPSTREAM_DIR: ${{ runner.temp }}/upstream
+      - name: Issue with the brief
+        if: steps.check.outputs.status == 'new'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UP: ${{ steps.check.outputs.upstream }}
+          BRIEF: ${{ steps.check.outputs.brief }}
+          VERDICT: ${{ steps.check.outputs.verdict }}
+        run: |
+          title="Wowhead Client $UP is out"
+          if gh issue list --state all --search "in:title \"$title\"" --json number --jq '.[0].number' | grep -q .; then
+            echo "issue exists"; exit 0
+          fi
+          body=$(mktemp)
+          {
+            case $VERDICT in
+              0) echo "Only the version changed. To follow it: \`tools/upstream/wowhead/check.sh --bump\`, add a CHANGELOG line, commit." ;;
+              1) echo "Code changed, but nothing the port uses (per \`watch.txt\`). Most likely \`tools/upstream/wowhead/check.sh --bump\` is enough." ;;
+              *) echo "Changes in parts the port uses. Port: \`src/services/wowhead.rs\`. Give an agent \`tools/upstream/AGENT.md\` and this brief." ;;
+            esac
+            echo
+            cat "$BRIEF"
+          } > "$body"
+          # Issue bodies are limited to 65536 characters.
+          head -c 60000 "$body" > "$body.cut"
+          gh issue create --title "$title" --body-file "$body.cut" --label upstream
