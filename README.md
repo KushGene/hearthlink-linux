@@ -8,7 +8,7 @@ distribution, with the game running through Lutris, Wine, Bottles or Steam/Proto
 
 | Service | What Hearthlink does | Windows app it replaces |
 |---|---|---|
-| **Wowhead** | Uploads the game caches and Wowhead Looter data; keeps the Looter addon up to date | Wowhead Client |
+| **Wowhead** | Uploads the game caches and Wowhead Looter data; keeps the Looter addon up to date; sends the Looter's in-game sync (WoW Forever) | Wowhead Client |
 | **WowUtils** | Sends your character data; writes your raid groups' wishlists and droptimizers into the game; sends RCLootCouncil's loot history to groups that take it | WowUtils Bridge |
 | **ForeverDB** | Installs, updates and runs ForeverDB's official Linux uploader (WoW Forever) | ForeverDB Uploader |
 | **ForeverWowCraft** | Installs, updates and runs the official ForeverWowCraft Helper (WoW Forever): sends the auction prices the addon saves, writes your profession routes into the game, keeps the addon installed | ForeverWowCraft Helper |

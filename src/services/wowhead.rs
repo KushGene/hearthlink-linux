@@ -1,9 +1,10 @@
-//! Wowhead: does what the Windows "Wowhead Client" 2.0.9771.6501 does.
+//! Wowhead: does what the Windows "Wowhead Client" 2.0.9801.37696 does.
 //!
 //! - logs in with a code the user approves on wowhead.com,
 //! - uploads the game's WDB caches, the hotfix cache (DBCache.bin) and the
 //!   `+Wowhead_Looter` SavedVariables, only what's new since the last upload,
-//! - keeps the `+Wowhead_Looter` addon up to date in every game folder.
+//! - keeps the `+Wowhead_Looter` addon up to date in every game folder,
+//! - sends what the Looter's in-game Sync button asks for while WoW Forever runs.
 
 use super::{Meta, Service};
 use crate::core::{self, lua, now_unix, store, wine, wow, Common, Env, Health};
@@ -14,8 +15,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
 pub static META: Meta = Meta {
     id: "wowhead",
@@ -24,7 +26,7 @@ pub static META: Meta = Meta {
     icon: include_bytes!("../../assets/icons/wowhead.png"),
     website: "https://www.wowhead.com/client",
     upstream_app: "Wowhead Client",
-    ported_version: "2.0.9771.6501",
+    ported_version: "2.0.9801.37696",
     upstream_url: "https://www.wowhead.com/client",
     runs_official: false,
 };
@@ -34,6 +36,7 @@ const URL_UPLOAD: &str = "https://www.wowhead.com/client/upload";
 const URL_NEW_CODE: &str = "https://www.wowhead.com/client/new-login-code";
 const URL_LOGIN: &str = "https://www.wowhead.com/client/login/";
 const URL_CODE_STATUS: &str = "https://www.wowhead.com/client/login-code-status/";
+const URL_SYNC: &str = "https://www.wowhead.com/client/sync";
 const LOCALES: [&str; 11] = ["enUS", "esES", "esMX", "deDE", "frFR", "itIT", "koKR", "ptBR", "ruRU", "zhCN", "zhTW"];
 const LOOTER_SV: &str = "+Wowhead_Looter.lua";
 
@@ -138,7 +141,7 @@ struct GameFolder {
 // ---------------------------------------------------------------------------------------
 // Settings
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct Config {
     enabled: bool,
@@ -151,6 +154,26 @@ struct Config {
     keep_looter_updated: bool,
     last_upload: i64,
     imported_from_wine: bool,
+    /// Send what the Looter's Sync button asks for (WoW Forever). On, like in the Windows
+    /// client, also for settings saved before this option existed.
+    in_game_sync: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            user: String::new(),
+            token: String::new(),
+            upload_character_data: None,
+            excluded_accounts: Vec::new(),
+            upload_on_game_exit: false,
+            keep_looter_updated: false,
+            last_upload: 0,
+            imported_from_wine: false,
+            in_game_sync: true,
+        }
+    }
 }
 
 impl Config {
@@ -494,6 +517,390 @@ fn set_uploaded(path: &Path) -> std::io::Result<()> {
 }
 
 // ---------------------------------------------------------------------------------------
+// SavedVariables split into their top-level assignments, like the Windows client's
+// SavedVariablesParser: character data is cut out by name, and an in-game sync sends
+// single variables.
+
+/// The Looter's character data, left out unless the user uploads character data.
+const CHARACTER_DATA_VARIABLES: [&str; 3] = ["wlExportData", "wlProfileData", "wlCharacterData"];
+
+/// The top-level assignments of a SavedVariables file in file order, as (name, block). A
+/// block runs from its name to the next top-level name, so it includes the trailing
+/// newline. A name only counts at the start of a line, outside strings and tables. When a
+/// name appears twice, the later block replaces the earlier one (at the earlier position).
+fn split_top_level(text: &str) -> Vec<(String, String)> {
+    let name_re = Regex::new(r"^([A-Za-z_][A-Za-z0-9_]*) = ").unwrap();
+    let b = text.as_bytes();
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut record = |name: String, block: &str| match out.iter_mut().find(|(n, _)| *n == name) {
+        Some(e) => e.1 = block.to_string(),
+        None => out.push((name, block.to_string())),
+    };
+    let (mut in_string, mut depth, mut line_start) = (false, 0i64, true);
+    let mut open: Option<(String, usize)> = None;
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if in_string {
+            if c == b'\\' {
+                i += 1;
+            } else if c == b'"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        if line_start && depth == 0 {
+            // Line starts are always char boundaries (right after a '\n', or 0).
+            if let Some(m) = text.get(i..).and_then(|rest| name_re.captures(rest)) {
+                if let Some((name, start)) = open.take() {
+                    record(name, &text[start..i]);
+                }
+                open = Some((m[1].to_string(), i));
+            }
+        }
+        line_start = false;
+        match c {
+            b'"' => in_string = true,
+            b'{' => depth += 1,
+            b'}' => depth -= 1,
+            b'\n' => line_start = true,
+            b'-' if b.get(i + 1) == Some(&b'-') => {
+                // A comment: go on at its line's newline, which starts the next line.
+                match b[i..].iter().position(|x| *x == b'\n') {
+                    Some(p) => i += p - 1,
+                    None => i = b.len(),
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if let Some((name, start)) = open {
+        record(name, &text[start..]);
+    }
+    out
+}
+
+/// The text without the named top-level assignments; everything else stays as it was.
+fn remove_top_level(text: &str, names: &[&str]) -> String {
+    let blocks = split_top_level(text);
+    let mut out = text.to_string();
+    for name in names {
+        if let Some((_, block)) = blocks.iter().find(|(n, _)| n == name) {
+            if let Some(p) = out.find(block.as_str()) {
+                out.replace_range(p..p + block.len(), "");
+            }
+        }
+    }
+    out
+}
+
+/// What the Looter's Sync button wrote into `wlSyncRequest`.
+#[derive(Debug, Clone, PartialEq)]
+struct SyncRequest {
+    time: i64,
+    version: i32,
+    vars: Vec<String>,
+}
+
+fn parse_sync_request(block: &str) -> Option<SyncRequest> {
+    let time = Regex::new(r#"\["time"\]\s*=\s*(\d+)"#).unwrap().captures(block)?[1].parse().ok()?;
+    let version = Regex::new(r#"\["version"\]\s*=\s*(\d+)"#)
+        .unwrap()
+        .captures(block)
+        .and_then(|c| c[1].parse().ok())
+        .unwrap_or(0);
+    let mut vars = Vec::new();
+    if let Some(m) = Regex::new(r#"\["vars"\]\s*=\s*\{"#).unwrap().find(block) {
+        let body = table_body(block, m.end());
+        for c in Regex::new(r#"(?s)"((?:[^"\\]|\\.)*)""#).unwrap().captures_iter(body) {
+            vars.push(c[1].to_string());
+        }
+    }
+    Some(SyncRequest { time, version, vars })
+}
+
+/// The inside of the table whose `{` ends right before `start`, up to its matching `}`
+/// (or the rest of the text when there's none).
+fn table_body(text: &str, start: usize) -> &str {
+    let b = text.as_bytes();
+    let (mut depth, mut in_string, mut i) = (1, false, start);
+    while i < b.len() {
+        let c = b[i];
+        if in_string {
+            if c == b'\\' {
+                i += 1;
+            } else if c == b'"' {
+                in_string = false;
+            }
+        } else if c == b'"' {
+            in_string = true;
+        } else if c == b'{' {
+            depth += 1;
+        } else if c == b'}' {
+            depth -= 1;
+            if depth == 0 {
+                return &text[start..i];
+            }
+        }
+        i += 1;
+    }
+    &text[start..]
+}
+
+// ---------------------------------------------------------------------------------------
+// In-game sync (WoW Forever): the Looter's Sync button writes `wlSyncRequest` and reloads
+// the UI, which saves the Looter file. While the game runs, a changed file with a new
+// request is sent to /client/sync, like the Windows client's SyncManager does.
+
+/// Game branches the Windows client syncs: Forever, Forever PTR, Forever Beta.
+const SYNC_BRANCHES: [u32; 3] = [19, 20, 21];
+/// Sent with every sync, besides the variables the request names.
+const ALWAYS_SENT: [&str; 3] = ["wlVersion", "wlSyncRequest", "wlRealmList"];
+
+/// What the sync knows about one account's Looter file.
+#[derive(Default)]
+struct FileState {
+    mtime: Option<SystemTime>,
+    len: u64,
+    stable_since: Option<Instant>,
+    checked: bool,
+    retry_at: Option<Instant>,
+    failed_sends: u32,
+    version_checks: u32,
+    waiting_for_login: bool,
+    pending: Option<(SyncRequest, Vec<(String, String)>)>,
+}
+
+/// The file's state after looking at it again: a changed file (time or size) starts over.
+fn file_state_update(old: Option<FileState>, mtime: SystemTime, len: u64, now: Instant) -> FileState {
+    match old {
+        Some(s) if s.mtime == Some(mtime) && s.len == len => s,
+        _ => FileState { mtime: Some(mtime), len, stable_since: Some(now), ..Default::default() },
+    }
+}
+
+/// True when the file should be looked at now: unchanged for 2 seconds, and either not
+/// checked since it changed or due for a retry.
+fn file_ready(s: &FileState, now: Instant) -> bool {
+    if s.stable_since.is_some_and(|t| now.saturating_duration_since(t) < Duration::from_secs(2)) {
+        return false;
+    }
+    if s.checked {
+        s.retry_at.is_some_and(|t| now >= t)
+    } else {
+        true
+    }
+}
+
+fn keep_pending(s: &mut FileState, req: SyncRequest, blocks: Vec<(String, String)>, secs: u64) {
+    s.pending = Some((req, blocks));
+    s.retry_at = Some(Instant::now() + Duration::from_secs(secs));
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyncResult {
+    Accepted,
+    Rejected,
+    Throttled,
+    Unauthorized,
+    Failed,
+}
+
+/// The site's answer to a sync; every field may be missing.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct SyncResponse {
+    error: Option<bool>,
+    message: Option<String>,
+    token: Option<String>,
+    wait: Option<i64>,
+    results: Option<BTreeMap<String, serde_json::Value>>,
+}
+
+/// How the Windows client reads the site's answer, in its order.
+fn classify_sync(status: u16, resp: Option<&SyncResponse>) -> SyncResult {
+    if status == 401 {
+        return SyncResult::Unauthorized;
+    }
+    if status == 429 || resp.is_some_and(|r| r.wait.unwrap_or(0) > 0) {
+        return SyncResult::Throttled;
+    }
+    if (200..300).contains(&status) {
+        return match resp {
+            None => SyncResult::Failed,
+            Some(r) if r.error == Some(true) => SyncResult::Rejected,
+            Some(_) => SyncResult::Accepted,
+        };
+    }
+    if status >= 500 {
+        return SyncResult::Failed;
+    }
+    SyncResult::Rejected
+}
+
+/// The parsed answer and how to treat it; a body that isn't JSON counts as no answer.
+fn read_sync_answer(status: u16, text: &str) -> (SyncResult, Option<SyncResponse>) {
+    let resp: Option<SyncResponse> = serde_json::from_str(text).ok();
+    (classify_sync(status, resp.as_ref()), resp)
+}
+
+/// What a sync sends: the always-sent variables, then the requested ones, as their blocks
+/// from the Looter file.
+#[derive(Debug, Default, PartialEq)]
+struct SyncBody {
+    body: String,
+    sent: Vec<String>,
+    /// Character data, not sent because this account doesn't upload it.
+    left_out: Vec<String>,
+    /// Requested names that aren't Looter variables.
+    skipped: Vec<String>,
+    /// Names not in the file.
+    missing: Vec<String>,
+}
+
+fn build_sync_body(blocks: &[(String, String)], req: &SyncRequest, with_characters: bool) -> SyncBody {
+    let var_re = Regex::new(r"^wl\w+$").unwrap();
+    let mut out = SyncBody::default();
+    let mut names: Vec<String> = ALWAYS_SENT.iter().map(|s| s.to_string()).collect();
+    for v in &req.vars {
+        if !var_re.is_match(v) {
+            out.skipped.push(v.clone());
+        } else if !names.contains(v) {
+            names.push(v.clone());
+        }
+    }
+    for n in names {
+        let Some((_, block)) = blocks.iter().find(|(k, _)| *k == n) else {
+            out.missing.push(n);
+            continue;
+        };
+        if !with_characters && CHARACTER_DATA_VARIABLES.contains(&n.as_str()) {
+            out.left_out.push(n);
+            continue;
+        }
+        out.body.push_str(block);
+        if !block.ends_with('\n') {
+            out.body.push_str("\r\n");
+        }
+        out.sent.push(n);
+    }
+    out
+}
+
+fn sync_file_name(g: &GameFolder, version: &str, account: &str) -> String {
+    format!("{}_{}_{}_Sync.lua.gz", g.branch.upload, version, account)
+}
+
+/// POSTs a sync like the Windows client: `file0` metadata.json (application/json), `file1`
+/// the gzipped variables (application/binary), the login in X-Wowhead-Client-Token.
+/// Returns the status and the body.
+fn post_sync(
+    http: &reqwest::blocking::Client,
+    url: &str,
+    token: &str,
+    metadata: String,
+    name: String,
+    data: Vec<u8>,
+) -> reqwest::Result<(u16, String)> {
+    use reqwest::blocking::multipart::{Form, Part};
+    let form = Form::new()
+        .part("file0", Part::text(metadata).file_name("metadata.json").mime_str("application/json")?)
+        .part("file1", Part::bytes(data).file_name(name).mime_str("application/binary")?);
+    let res = http.post(url).header("X-Wowhead-Client-Token", token).multipart(form).send()?;
+    let status = res.status().as_u16();
+    Ok((status, res.text().unwrap_or_default()))
+}
+
+/// " key: value." for each result the site listed, else " message", else nothing.
+fn describe_results(resp: Option<&SyncResponse>) -> String {
+    let results = resp.and_then(|r| r.results.as_ref()).filter(|r| !r.is_empty());
+    match results {
+        Some(r) => {
+            let parts: Vec<String> = r
+                .iter()
+                .map(|(k, v)| format!("{k}: {}.", v.as_str().map(String::from).unwrap_or_else(|| v.to_string())))
+                .collect();
+            format!(" {}", parts.join(" "))
+        }
+        None => match resp.and_then(|r| r.message.as_deref()).filter(|m| !m.is_empty()) {
+            Some(m) => format!(" {m}"),
+            None => String::new(),
+        },
+    }
+}
+
+fn sync_json_path() -> PathBuf {
+    data_dir().join("cache").join("sync.json")
+}
+
+/// The time of the last request handled per Looter file (path -> request time).
+fn load_handled() -> HashMap<String, i64> {
+    fs::read(sync_json_path()).ok().and_then(|d| serde_json::from_slice(&d).ok()).unwrap_or_default()
+}
+
+fn path_key(p: &Path) -> String {
+    p.to_string_lossy().into_owned()
+}
+
+/// The locales the game folders have caches for (realm lists are looked up per locale), all
+/// folders together like the Windows client's DataManager.locales.
+fn all_locales(games: &[GameFolder]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for g in games {
+        if let Ok(rd) = fs::read_dir(g.flavor.path.join("Cache").join("WDB")) {
+            out.extend(rd.flatten().filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().into_owned()));
+        }
+        for l in LOCALES {
+            if g.flavor.path.join("Cache").join("ADB").join(l).join("DBCache.bin").is_file() {
+                out.push(l.to_string());
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn read_looter_file(path: &Path, c: &Common) -> Option<String> {
+    for attempt in 1..=4 {
+        match fs::read(path) {
+            Ok(d) => return Some(String::from_utf8_lossy(&d).into_owned()),
+            Err(e) if attempt == 4 => c.warn(format!("In-game sync: could not read {}: {e}", short_path(path))),
+            Err(_) => std::thread::sleep(Duration::from_millis(500)),
+        }
+    }
+    None
+}
+
+#[derive(Default)]
+struct SyncState {
+    files: HashMap<PathBuf, FileState>,
+    refused_token: Option<String>,
+    handled: Option<HashMap<String, i64>>,
+    running: Vec<wow::RunningGame>,
+    running_checked: Option<Instant>,
+    /// The Forever game folders, and the locales of all game folders (the Windows client
+    /// looks up realm lists for every locale it has seen, not only this game's).
+    games: Vec<GameFolder>,
+    locales: Vec<String>,
+    games_checked: Option<Instant>,
+}
+
+impl SyncState {
+    fn handled_time(&mut self, path: &Path) -> i64 {
+        self.handled.get_or_insert_with(load_handled).get(&path_key(path)).copied().unwrap_or(0)
+    }
+
+    fn set_handled(&mut self, path: &Path, time: i64) -> std::io::Result<()> {
+        let h = self.handled.get_or_insert_with(load_handled);
+        h.insert(path_key(path), time);
+        core::write_atomic(&sync_json_path(), &serde_json::to_vec_pretty(h).unwrap_or_default())
+    }
+}
+
+// ---------------------------------------------------------------------------------------
 // The Looter addon update ("updates.dat", magic MTWC).
 
 struct LooterUpdate {
@@ -609,6 +1016,10 @@ struct Inner {
     http: reqwest::blocking::Client,
     looter_note: Mutex<String>,
     game_was_running: Mutex<bool>,
+    sync: Mutex<SyncState>,
+    /// True during a sync tick; an upload waits for it.
+    sync_busy: AtomicBool,
+    sync_http: reqwest::blocking::Client,
 }
 
 impl Wowhead {
@@ -626,6 +1037,9 @@ impl Wowhead {
             http: core::http_client(&user_agent(), 120),
             looter_note: Mutex::new(String::new()),
             game_was_running: Mutex::new(false),
+            sync: Mutex::new(SyncState::default()),
+            sync_busy: AtomicBool::new(false),
+            sync_http: core::http_client(&user_agent(), 30),
         });
         Self { inner }
     }
@@ -732,6 +1146,10 @@ impl Inner {
             }
             return;
         }
+        // An in-game sync that's under way finishes first (it doesn't start while we run).
+        while self.sync_busy.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(500));
+        }
         let games = self.games();
         if games.is_empty() {
             c.warn("No WoW game folders found. Pick your World of Warcraft folder in Settings.");
@@ -810,7 +1228,7 @@ impl Inner {
                     let mut text = String::from_utf8_lossy(&raw).into_owned();
                     let excluded = cfg.excluded_accounts.iter().any(|a| a == &f.account);
                     if excluded || !cfg.upload_character_data.unwrap_or(false) {
-                        text = Regex::new(r"(?i)wlExportData = .*\r?\n").unwrap().replace_all(&text, "").into_owned();
+                        text = remove_top_level(&text, &CHARACTER_DATA_VARIABLES);
                     }
                     let name = format!("{branch_name}_{version}_{}_SavedVariables.lua.gz", f.account);
                     parts.push((name, core::gzip(text.as_bytes()), "application/binary"));
@@ -1027,6 +1445,239 @@ impl Inner {
         *self.looter_note.lock().unwrap() = note;
     }
 
+    /// The in-game sync: every 2 seconds, like the Windows client's sync timer.
+    fn sync_loop(self: Arc<Self>) {
+        loop {
+            std::thread::sleep(Duration::from_secs(2));
+            let on = {
+                let cfg = self.cfg.lock().unwrap();
+                cfg.enabled && cfg.in_game_sync
+            };
+            if on {
+                self.sync_tick();
+            } else {
+                self.sync.lock().unwrap().files.clear();
+            }
+        }
+    }
+
+    fn sync_tick(&self) {
+        let mut st = self.sync.lock().unwrap();
+        let now = Instant::now();
+        if st.running_checked.is_none_or(|t| now.duration_since(t) >= Duration::from_secs(10)) {
+            st.running = wow::running_games();
+            st.running_checked = Some(now);
+        }
+        if st.running.is_empty() {
+            st.files.clear();
+            return;
+        }
+        // Mark the sync first, then look for an upload: one of the two always sees the other.
+        self.sync_busy.store(true, Ordering::SeqCst);
+        if !self.common.is_busy() {
+            if st.games_checked.is_none_or(|t| now.duration_since(t) >= Duration::from_secs(60)) {
+                let all = self.games();
+                st.locales = all_locales(&all);
+                st.games = all.into_iter().filter(|g| SYNC_BRANCHES.contains(&g.branch.id)).collect();
+                st.games_checked = Some(now);
+            }
+            // Only the game folders whose client runs, like the Windows client: a running
+            // retail client doesn't make Hearthlink look at the Forever files.
+            let games: Vec<GameFolder> = st.games.iter().filter(|g| wow::runs_in(&st.running, &g.flavor)).cloned().collect();
+            let mut seen: HashSet<PathBuf> = HashSet::new();
+            let mut stopped = false;
+            'games: for g in &games {
+                for (account, sv) in g.flavor.accounts() {
+                    let path = sv.join(LOOTER_SV);
+                    seen.insert(path.clone());
+                    let Ok(meta) = fs::metadata(&path) else { continue };
+                    let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                    let s = file_state_update(st.files.remove(&path), mtime, meta.len(), Instant::now());
+                    if !file_ready(&s, Instant::now()) || self.common.is_busy() {
+                        // An upload started: stop this tick and keep every file's state.
+                        stopped = self.common.is_busy();
+                        st.files.insert(path, s);
+                        if stopped {
+                            break 'games;
+                        }
+                        continue;
+                    }
+                    let s = self.sync_file(&mut st, g, &account, &path, s);
+                    st.files.insert(path, s);
+                }
+            }
+            if !stopped {
+                st.files.retain(|p, _| seen.contains(p));
+            }
+        }
+        self.sync_busy.store(false, Ordering::SeqCst);
+    }
+
+    /// Looks at one account's Looter file and sends its sync request if it has a new one.
+    fn sync_file(&self, st: &mut SyncState, g: &GameFolder, account: &str, path: &Path, mut s: FileState) -> FileState {
+        let c = &self.common;
+        let file = short_path(path);
+        s.checked = true;
+        s.retry_at = None;
+        let (req, blocks) = match s.pending.take() {
+            Some(p) => p,
+            None => {
+                let Some(text) = read_looter_file(path, c) else {
+                    s.retry_at = Some(Instant::now() + Duration::from_secs(30));
+                    return s;
+                };
+                let blocks = split_top_level(text.trim_start_matches('\u{feff}'));
+                let Some((_, request_block)) = blocks.iter().find(|(n, _)| n == "wlSyncRequest") else { return s };
+                let Some(req) = parse_sync_request(request_block) else {
+                    c.warn(format!("In-game sync: wlSyncRequest has no time in {file}."));
+                    return s;
+                };
+                if req.time <= st.handled_time(path) {
+                    return s;
+                }
+                let blocks: Vec<(String, String)> =
+                    blocks.into_iter().filter(|(n, _)| ALWAYS_SENT.contains(&n.as_str()) || req.vars.contains(n)).collect();
+                (req, blocks)
+            }
+        };
+        let token = self.cfg.lock().unwrap().token.clone();
+        if token.is_empty() || st.refused_token.as_deref() == Some(token.as_str()) {
+            if !s.waiting_for_login {
+                c.warn(format!("In-game sync: request {} in {file} waits for a login.", req.time));
+                s.waiting_for_login = true;
+            }
+            keep_pending(&mut s, req, blocks, 10);
+            return s;
+        }
+        s.waiting_for_login = false;
+        let Some(version) = g.version.clone().filter(|v| !v.is_empty()) else {
+            s.version_checks += 1;
+            if s.version_checks < 5 {
+                c.warn(format!("In-game sync: no game version known for {}, can't send request {}.", g.branch.display, req.time));
+                keep_pending(&mut s, req, blocks, 30);
+            } else {
+                c.warn(format!("In-game sync: still no game version known for {}, not retrying request {}.", g.branch.display, req.time));
+                self.sync_notice(false, "Sync not sent: Hearthlink couldn't find the game's version. Check the WoW folder in Settings, then sync again.");
+            }
+            return s;
+        };
+        c.info(format!("In-game sync: sending request {} from {file}.", req.time));
+        let locales = st.locales.clone();
+        let (result, resp, left_out) = self.sync_send(g, &version, account, &blocks, &req, &locales);
+        let req_time = req.time;
+        let save_handled = |st: &mut SyncState| {
+            if let Err(e) = st.set_handled(path, req_time) {
+                c.warn(format!("In-game sync: couldn't save {}: {e}", sync_json_path().display()));
+            }
+        };
+        match result {
+            SyncResult::Accepted => {
+                save_handled(st);
+                c.info(format!("In-game sync: request {} done.{}", req.time, describe_results(resp.as_ref())));
+                if left_out.is_empty() {
+                    self.sync_notice(true, "Character data synced to Wowhead.");
+                } else {
+                    self.sync_notice(true, "Character data was not sent: this account doesn't upload character data.");
+                }
+            }
+            SyncResult::Rejected => {
+                save_handled(st);
+                let msg = resp.as_ref().and_then(|r| r.message.clone()).filter(|m| !m.trim().is_empty());
+                c.warn(format!("In-game sync: request {} rejected by the site: {}", req.time, msg.clone().unwrap_or_default()));
+                match msg {
+                    Some(m) => self.sync_notice(false, &format!("Wowhead couldn't take this sync: {m}")),
+                    None => self.sync_notice(false, "Wowhead couldn't take this sync."),
+                }
+            }
+            SyncResult::Throttled => {
+                let wait = resp.as_ref().and_then(|r| r.wait).filter(|w| *w > 0).unwrap_or(60) as u64;
+                c.info(format!("In-game sync: request {} throttled, retrying in {wait} seconds.", req.time));
+                keep_pending(&mut s, req, blocks, wait);
+            }
+            SyncResult::Unauthorized => {
+                st.refused_token = Some(token);
+                c.warn(format!("In-game sync: login refused, request {} waits for a new login.", req.time));
+                keep_pending(&mut s, req, blocks, 10);
+            }
+            SyncResult::Failed => {
+                s.failed_sends += 1;
+                if s.failed_sends <= 1 {
+                    c.warn(format!("In-game sync: request {} failed, retrying in 30 seconds.", req.time));
+                    keep_pending(&mut s, req, blocks, 30);
+                } else {
+                    c.warn(format!("In-game sync: request {} failed again, not retrying.", req.time));
+                    self.sync_notice(false, "Sync failed: Hearthlink couldn't get an answer from Wowhead. Sync again later.");
+                }
+            }
+        }
+        s
+    }
+
+    fn sync_notice(&self, good: bool, text: &str) {
+        if good {
+            self.common.good(text);
+        } else {
+            self.common.warn(text);
+        }
+        self.env.notify("Wowhead", text);
+    }
+
+    /// Sends one sync request: metadata plus the requested Looter variables.
+    fn sync_send(
+        &self,
+        g: &GameFolder,
+        version: &str,
+        account: &str,
+        blocks: &[(String, String)],
+        req: &SyncRequest,
+        locales: &[String],
+    ) -> (SyncResult, Option<SyncResponse>, Vec<String>) {
+        let c = &self.common;
+        let cfg = self.cfg.lock().unwrap().clone();
+        let excluded = cfg.excluded_accounts.iter().any(|a| a == account);
+        let with_characters = cfg.upload_character_data == Some(true) && !excluded;
+        let b = build_sync_body(blocks, req, with_characters);
+        for v in &b.skipped {
+            c.warn(format!("In-game sync: skipping requested variable \"{v}\", not a Looter variable."));
+        }
+        for n in &b.missing {
+            c.info(format!("In-game sync: {n} is not in the Looter file."));
+        }
+        if !b.left_out.is_empty() {
+            let reason = if cfg.upload_character_data != Some(true) {
+                "character data upload is off".to_string()
+            } else {
+                format!("account {account} is excluded")
+            };
+            c.info(format!("In-game sync: {reason}, not sending {}.", b.left_out.join(", ")));
+        }
+        let metadata = self.metadata(std::slice::from_ref(g), locales, with_characters);
+        let data = core::gzip(b.body.as_bytes());
+        let name = sync_file_name(g, version, account);
+        c.info(format!("In-game sync: sending {name}, {} bytes, variables {}.", data.len(), b.sent.join(", ")));
+        let (status, text) = match post_sync(&self.sync_http, URL_SYNC, &cfg.token, metadata, name, data) {
+            Ok(r) => r,
+            Err(e) => {
+                let why = if e.is_timeout() { "timed out".to_string() } else { core::friendly_error(&e) };
+                c.warn(format!("In-game sync: {why}"));
+                return (SyncResult::Failed, None, b.left_out);
+            }
+        };
+        let (result, resp) = read_sync_answer(status, &text);
+        if let Some(t) = resp.as_ref().and_then(|r| r.token.clone()).filter(|t| !t.trim().is_empty()) {
+            self.cfg.lock().unwrap().token = t;
+            self.save();
+        }
+        if result == SyncResult::Failed {
+            if status >= 500 {
+                c.warn(format!("In-game sync: server error {status}."));
+            } else {
+                c.warn("In-game sync: the site's reply could not be read.");
+            }
+        }
+        (result, resp, b.left_out)
+    }
+
     fn worker(self: Arc<Self>) {
         let c = self.common.clone();
         if !self.cfg.lock().unwrap().imported_from_wine {
@@ -1116,6 +1767,8 @@ impl Service for Wowhead {
     fn start(&self) {
         let w = self.inner.clone();
         std::thread::spawn(move || w.worker());
+        let s = self.inner.clone();
+        std::thread::spawn(move || s.sync_loop());
         let i = self.inner.clone();
         let http = self.inner.http.clone();
         super::watch_upstream(self.inner.env.clone(), self.inner.common.clone(), &META, move || {
@@ -1220,6 +1873,7 @@ impl Service for Wowhead {
             let mut c = cfg.clone();
             ui.checkbox(&mut c.upload_on_game_exit, "Upload automatically when I close WoW");
             ui.checkbox(&mut c.keep_looter_updated, "Keep the Wowhead Looter addon up to date (checked every 6 hours)");
+            ui.checkbox(&mut c.in_game_sync, "In-game sync for WoW Forever: send what the Looter's Sync button asks for while you play");
             let mut chars = c.upload_character_data.unwrap_or(false);
             if ui
                 .checkbox(&mut chars, "Also upload my character data, so I can use it on wowhead.com")
@@ -1265,6 +1919,7 @@ impl Service for Wowhead {
             if c.upload_character_data != cfg.upload_character_data
                 || c.upload_on_game_exit != cfg.upload_on_game_exit
                 || c.keep_looter_updated != cfg.keep_looter_updated
+                || c.in_game_sync != cfg.in_game_sync
                 || c.excluded_accounts != cfg.excluded_accounts
             {
                 *i.cfg.lock().unwrap() = c;
@@ -1290,6 +1945,371 @@ mod tests {
         for (i, b) in BRANCHES.iter().enumerate() {
             assert_eq!(b.id as usize, i);
         }
+        for id in SYNC_BRANCHES {
+            assert_eq!(BRANCHES[id as usize].upload, "CLASSICPLUS");
+        }
+    }
+
+    const LOOTER: &str = concat!(
+        "wlVersion = 110207\n",
+        "wlUploaded = 0\n",
+        "wlStats = \"a{b}c\\\"d -- not a comment\"\n",
+        "wlExportData = \"x = 1\\nwlProfileData = 2\"\n",
+        "wlProfileData = {\n",
+        "\t[\"Name^Realm\"] = {\n",
+        "\t\t[\"note\"] = \"} { \\\" --\",\n",
+        "-- {\n",
+        "wlCharacterData = \"nested, not top level\",\n",
+        "\t},\n",
+        "}\n",
+        "  wlRealmList = \"indented, not top level\"\n",
+        "wlRealmList = {\n",
+        "[\"eu.logon\"] = 1,\n",
+        "}\n",
+        "wlCharacterData = {\n",
+        "}\n",
+        "wlSyncRequest = nil",
+    );
+
+    #[test]
+    fn top_level_blocks() {
+        let b = split_top_level(LOOTER);
+        let names: Vec<&str> = b.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            ["wlVersion", "wlUploaded", "wlStats", "wlExportData", "wlProfileData", "wlRealmList", "wlCharacterData", "wlSyncRequest"]
+        );
+        let block = |n: &str| b.iter().find(|(k, _)| k == n).unwrap().1.clone();
+        assert!(block("wlProfileData").starts_with("wlProfileData = {\n"));
+        assert!(block("wlProfileData").contains("nested, not top level"));
+        assert!(block("wlProfileData").ends_with("  wlRealmList = \"indented, not top level\"\n"));
+        assert_eq!(block("wlRealmList"), "wlRealmList = {\n[\"eu.logon\"] = 1,\n}\n");
+        assert_eq!(block("wlSyncRequest"), "wlSyncRequest = nil");
+        // The blocks put back together are the whole file.
+        assert_eq!(b.iter().map(|(_, t)| t.as_str()).collect::<String>(), LOOTER);
+    }
+
+    #[test]
+    fn top_level_crlf_and_duplicates() {
+        let t = "a = 1\r\nb = {\r\n  x = 2,\r\n}\r\na = 3\r\n";
+        let b = split_top_level(t);
+        assert_eq!(b, vec![("a".to_string(), "a = 3\r\n".to_string()), ("b".to_string(), "b = {\r\n  x = 2,\r\n}\r\n".to_string())]);
+        assert!(split_top_level("").is_empty());
+        assert!(split_top_level("-- only a comment").is_empty());
+    }
+
+    #[test]
+    fn character_data_removed() {
+        let out = remove_top_level(LOOTER, &CHARACTER_DATA_VARIABLES);
+        let expected = concat!(
+            "wlVersion = 110207\n",
+            "wlUploaded = 0\n",
+            "wlStats = \"a{b}c\\\"d -- not a comment\"\n",
+            "wlRealmList = {\n",
+            "[\"eu.logon\"] = 1,\n",
+            "}\n",
+            "wlSyncRequest = nil",
+        );
+        assert_eq!(out, expected);
+        // Nothing to remove: unchanged.
+        assert_eq!(remove_top_level("wlVersion = 1\n", &CHARACTER_DATA_VARIABLES), "wlVersion = 1\n");
+    }
+
+    #[test]
+    fn sync_request() {
+        let block = concat!(
+            "wlSyncRequest = {\n",
+            "[\"time\"] = 1762268000,\n",
+            "[\"version\"] = 1,\n",
+            "[\"vars\"] = {\n",
+            "\"wlProfileData\", -- [1]\n",
+            "\"wlCharacterData\", -- [2]\n",
+            "},\n",
+            "[\"announced\"] = true,\n",
+            "}\n",
+        );
+        assert_eq!(
+            parse_sync_request(block),
+            Some(SyncRequest { time: 1762268000, version: 1, vars: vec!["wlProfileData".into(), "wlCharacterData".into()] })
+        );
+        assert_eq!(
+            parse_sync_request("wlSyncRequest = {\n[\"time\"] = 5,\n}\n"),
+            Some(SyncRequest { time: 5, version: 0, vars: vec![] })
+        );
+        assert_eq!(parse_sync_request("wlSyncRequest = {\n[\"version\"] = 1,\n}\n"), None);
+        assert_eq!(parse_sync_request("wlSyncRequest = nil"), None);
+        // A table body with nested tables and strings stops at its own closing brace.
+        assert_eq!(table_body("{a = {\"}\"}, b} rest", 1), "a = {\"}\"}, b");
+        assert_eq!(table_body("{open", 1), "open");
+    }
+
+    #[test]
+    fn in_game_sync_defaults_on() {
+        let old: Config = serde_json::from_str(r#"{"enabled": true, "token": "t"}"#).unwrap();
+        assert!(old.in_game_sync);
+        assert!(old.enabled);
+        let off: Config = serde_json::from_str(r#"{"in_game_sync": false}"#).unwrap();
+        assert!(!off.in_game_sync);
+        assert!(Config::fresh().in_game_sync);
+    }
+
+    #[test]
+    fn file_readiness() {
+        let t0 = Instant::now();
+        let m1 = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
+        let m2 = SystemTime::UNIX_EPOCH + Duration::from_secs(200);
+        let s = file_state_update(None, m1, 10, t0);
+        assert!(!file_ready(&s, t0 + Duration::from_secs(1)));
+        assert!(file_ready(&s, t0 + Duration::from_secs(2)));
+        // Checked and unchanged: only again when a retry is due.
+        let mut s = file_state_update(Some(s), m1, 10, t0 + Duration::from_secs(5));
+        s.checked = true;
+        assert!(!file_ready(&s, t0 + Duration::from_secs(5)));
+        s.retry_at = Some(t0 + Duration::from_secs(30));
+        s.failed_sends = 1;
+        assert!(!file_ready(&s, t0 + Duration::from_secs(29)));
+        assert!(file_ready(&s, t0 + Duration::from_secs(30)));
+        // A changed file starts over.
+        let s = file_state_update(Some(s), m2, 10, t0 + Duration::from_secs(40));
+        assert!(!s.checked && s.retry_at.is_none() && s.failed_sends == 0);
+        assert!(!file_ready(&s, t0 + Duration::from_secs(41)));
+        let s = file_state_update(Some(s), m2, 11, t0 + Duration::from_secs(50));
+        assert_eq!(s.stable_since, Some(t0 + Duration::from_secs(50)));
+    }
+
+    const SYNC_LOOTER: &str = concat!(
+        "wlVersion = 16001\r\n",
+        "wlStats = \"1^2\"\r\n",
+        "wlProfileData = {\r\n[\"Name^Realm\"] = {\r\n[\"level\"] = 60,\r\n},\r\n}\r\n",
+        "wlCharacterData = {\r\n}\r\n",
+        "wlRealmList = {\r\n[\"eu.logon\"] = 1,\r\n}\r\n",
+        "wlSyncRequest = {\r\n[\"time\"] = 1762268000,\r\n[\"version\"] = 1,\r\n[\"vars\"] = {\r\n",
+        "\"wlProfileData\", -- [1]\r\n\"wlCharacterData\", -- [2]\r\n\"wlProfileData\", -- [3]\r\n\"os.exit\", -- [4]\r\n\"wlMissing\", -- [5]\r\n",
+        "},\r\n[\"announced\"] = true,\r\n}",
+    );
+
+    fn sync_parts() -> (Vec<(String, String)>, SyncRequest) {
+        let blocks = split_top_level(SYNC_LOOTER);
+        let req = parse_sync_request(&blocks.iter().find(|(n, _)| n == "wlSyncRequest").unwrap().1).unwrap();
+        (blocks, req)
+    }
+
+    #[test]
+    fn sync_body() {
+        let (blocks, req) = sync_parts();
+        assert_eq!(req.vars, ["wlProfileData", "wlCharacterData", "wlProfileData", "os.exit", "wlMissing"]);
+        let block = |n: &str| blocks.iter().find(|(k, _)| k == n).unwrap().1.clone();
+
+        let b = build_sync_body(&blocks, &req, true);
+        assert_eq!(b.sent, ["wlVersion", "wlSyncRequest", "wlRealmList", "wlProfileData", "wlCharacterData"]);
+        assert_eq!(b.skipped, ["os.exit"]);
+        assert_eq!(b.missing, ["wlMissing"]);
+        assert!(b.left_out.is_empty());
+        // The last block has no newline; one is added. wlStats is never sent.
+        let want = [block("wlVersion"), block("wlSyncRequest") + "\r\n", block("wlRealmList"), block("wlProfileData"), block("wlCharacterData")].concat();
+        assert_eq!(b.body, want);
+        assert!(!b.body.contains("wlStats"));
+
+        // Character data off (or account excluded): only the always-sent variables go.
+        let b = build_sync_body(&blocks, &req, false);
+        assert_eq!(b.sent, ["wlVersion", "wlSyncRequest", "wlRealmList"]);
+        assert_eq!(b.left_out, ["wlProfileData", "wlCharacterData"]);
+        assert!(!b.body.contains("Name^Realm"));
+    }
+
+    /// One HTTP exchange on a local port: returns the URL and, once the client has sent its
+    /// request, the raw request bytes. Answers with `status` and `body`.
+    fn mock_server(status: u16, body: &'static str) -> (String, std::thread::JoinHandle<Vec<u8>>) {
+        use std::io::Write;
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/client/sync", l.local_addr().unwrap());
+        let h = std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            let mut buf = Vec::new();
+            let mut tmp = [0u8; 65536];
+            loop {
+                let n = s.read(&mut tmp).unwrap();
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&tmp[..n]);
+                let Some(p) = find(&buf, b"\r\n\r\n") else { continue };
+                let head = String::from_utf8_lossy(&buf[..p]).to_lowercase();
+                let len = head.lines().find_map(|l| l.strip_prefix("content-length:")).map(|v| v.trim().parse::<usize>().unwrap());
+                match len {
+                    Some(len) if buf.len() >= p + 4 + len => break,
+                    None if head.contains("transfer-encoding: chunked") && buf.ends_with(b"0\r\n\r\n") => break,
+                    _ => {}
+                }
+            }
+            write!(s, "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+                .unwrap();
+            buf
+        });
+        (url, h)
+    }
+
+    fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+        hay.windows(needle.len()).position(|w| w == needle)
+    }
+
+    /// The multipart parts of a raw request as (headers, content).
+    fn multipart(raw: &[u8]) -> (String, Vec<(String, Vec<u8>)>) {
+        let p = find(raw, b"\r\n\r\n").unwrap();
+        let head = String::from_utf8_lossy(&raw[..p]).into_owned();
+        let boundary = head.lines().find_map(|l| l.split_once("boundary=")).unwrap().1.trim().to_string();
+        let delim = format!("--{boundary}");
+        let mut body = &raw[p + 4..];
+        let mut parts = Vec::new();
+        while let Some(i) = find(body, delim.as_bytes()) {
+            body = &body[i + delim.len()..];
+            if body.starts_with(b"--") {
+                break;
+            }
+            let Some(h) = find(body, b"\r\n\r\n") else { break };
+            let headers = String::from_utf8_lossy(&body[..h]).trim().to_string();
+            let rest = &body[h + 4..];
+            let end = find(rest, format!("\r\n{delim}").as_bytes()).unwrap();
+            parts.push((headers, rest[..end].to_vec()));
+            body = &rest[end + 2..];
+        }
+        (head, parts)
+    }
+
+    #[test]
+    fn sync_request_on_the_wire() {
+        let (blocks, req) = sync_parts();
+        let b = build_sync_body(&blocks, &req, false);
+        let flavor = wow::Flavor { folder: "_forever_".into(), path: PathBuf::from("/nowhere/_forever_") };
+        let g = GameFolder { branch: BRANCHES[19].clone(), flavor, version: Some("1.60.1.12345".into()) };
+        let name = sync_file_name(&g, "1.60.1.12345", "ACCOUNT#1");
+        assert_eq!(name, "CLASSICPLUS_1.60.1.12345_ACCOUNT#1_Sync.lua.gz");
+        let metadata = r#"{"portals":["eu"],"realms":[],"processCharacterData":false}"#.to_string();
+        let http = core::http_client(&user_agent(), 30);
+
+        let (url, server) = mock_server(200, r#"{"error": false, "results": {"wlProfileData": "stored"}}"#);
+        let (status, text) = post_sync(&http, &url, "tok123", metadata.clone(), name.clone(), core::gzip(b.body.as_bytes())).unwrap();
+        let raw = server.join().unwrap();
+        let (head, parts) = multipart(&raw);
+        assert!(head.starts_with("POST /client/sync HTTP/1.1\r\n"), "{head}");
+        let lower = head.to_lowercase();
+        assert!(lower.contains("\r\nx-wowhead-client-token: tok123"), "{head}");
+        assert!(lower.contains(&format!("\r\nuser-agent: {}", user_agent().to_lowercase())), "{head}");
+        assert!(lower.contains("content-type: multipart/form-data; boundary="), "{head}");
+        assert_eq!(parts.len(), 2);
+        let (h0, d0) = &parts[0];
+        assert!(h0.contains(r#"name="file0"; filename="metadata.json""#), "{h0}");
+        assert!(h0.to_lowercase().contains("content-type: application/json"), "{h0}");
+        assert_eq!(String::from_utf8_lossy(d0), metadata);
+        let (h1, d1) = &parts[1];
+        assert!(h1.contains(&format!(r#"name="file1"; filename="{name}""#)), "{h1}");
+        assert!(h1.to_lowercase().contains("content-type: application/binary"), "{h1}");
+        let mut unzipped = String::new();
+        flate2::read::GzDecoder::new(&d1[..]).read_to_string(&mut unzipped).unwrap();
+        assert_eq!(unzipped, b.body);
+        // Character data off: the profile itself isn't in it (its name is, in wlSyncRequest).
+        assert!(unzipped.starts_with("wlVersion = 16001\r\n") && !unzipped.contains("Name^Realm"));
+        assert!(!unzipped.contains("wlProfileData = "));
+        let (result, resp) = read_sync_answer(status, &text);
+        assert_eq!(result, SyncResult::Accepted);
+        assert_eq!(describe_results(resp.as_ref()), " wlProfileData: stored.");
+
+        // Each kind of answer, through a real exchange.
+        for (status, body, want) in [
+            (200, r#"{"error": true, "message": "not accepted"}"#, SyncResult::Rejected),
+            (200, r#"{"wait": 45}"#, SyncResult::Throttled),
+            (429, "", SyncResult::Throttled),
+            (401, r#"{"error": true}"#, SyncResult::Unauthorized),
+            (503, "<html>busy</html>", SyncResult::Failed),
+            (200, "<html>not json</html>", SyncResult::Failed),
+            (404, "", SyncResult::Rejected),
+        ] {
+            let (url, server) = mock_server(status, body);
+            let (s, text) = post_sync(&http, &url, "tok123", metadata.clone(), name.clone(), core::gzip(b"x")).unwrap();
+            server.join().unwrap();
+            assert_eq!((s, read_sync_answer(s, &text).0), (status, want), "{status} {body}");
+        }
+    }
+
+    #[test]
+    fn locales_of_all_games() {
+        let dir = std::env::temp_dir().join(format!("hearthlink-locales-{}", std::process::id()));
+        let mk = |p: &str| fs::create_dir_all(dir.join(p)).unwrap();
+        mk("_retail_/Cache/WDB/enUS");
+        mk("_forever_/Cache/WDB/deDE");
+        mk("_forever_/Cache/ADB/enUS");
+        fs::write(dir.join("_forever_/Cache/ADB/enUS/DBCache.bin"), b"").unwrap();
+        mk("_forever_/Cache/ADB/frFR");
+        let g = |folder: &str, id: usize| GameFolder {
+            branch: BRANCHES[id].clone(),
+            flavor: wow::Flavor { folder: folder.into(), path: dir.join(folder) },
+            version: None,
+        };
+        let locales = all_locales(&[g("_retail_", 0), g("_forever_", 19)]);
+        fs::remove_dir_all(&dir).unwrap();
+        // frFR has no DBCache.bin, so it doesn't count.
+        assert_eq!(locales, ["deDE", "enUS"]);
+    }
+
+    /// `HEARTHLINK_LOOTER_FILES=a.lua:b.lua cargo test real_looter_files -- --ignored`
+    #[test]
+    #[ignore]
+    fn real_looter_files() {
+        let files = std::env::var("HEARTHLINK_LOOTER_FILES").unwrap_or_default();
+        for f in files.split(':').filter(|f| !f.is_empty()) {
+            let text = String::from_utf8_lossy(&fs::read(f).unwrap()).into_owned();
+            let b = split_top_level(&text);
+            // Everything after a possible blank start belongs to a block.
+            let joined: String = b.iter().map(|(_, t)| t.as_str()).collect();
+            assert!(text.ends_with(&joined) && text[..text.len() - joined.len()].trim().is_empty(), "{f}");
+            let names: Vec<&str> = b.iter().map(|(n, _)| n.as_str()).collect();
+            assert!(names.iter().all(|n| n.starts_with("wl")), "{f}: {names:?}");
+            let stripped = remove_top_level(&text, &CHARACTER_DATA_VARIABLES);
+            let left: Vec<String> = split_top_level(&stripped).into_iter().map(|(n, _)| n).collect();
+            let want: Vec<&str> = names.iter().copied().filter(|n| !CHARACTER_DATA_VARIABLES.contains(n)).collect();
+            assert_eq!(left, want, "{f}");
+            println!("{f}: {} bytes, {names:?}, {} bytes without character data", text.len(), stripped.len());
+
+            // The same file after a Sync press: the request the Looter (16001) writes, at the
+            // end, the way the game saves it. Only an in-memory copy; the file isn't touched.
+            let mut synced = text.trim_end().to_string();
+            synced.push_str(concat!(
+                "\nwlSyncRequest = {\n[\"time\"] = 1762268000,\n[\"version\"] = 1,\n",
+                "[\"vars\"] = {\n\"wlProfileData\", -- [1]\n\"wlCharacterData\", -- [2]\n},\n}\n",
+            ));
+            let blocks = split_top_level(&synced);
+            let req = parse_sync_request(&blocks.iter().find(|(n, _)| n == "wlSyncRequest").unwrap().1).unwrap();
+            assert_eq!(req.time, 1762268000);
+            for with_characters in [false, true] {
+                let b = build_sync_body(&blocks, &req, with_characters);
+                let again: Vec<String> = split_top_level(&b.body).into_iter().map(|(n, _)| n).collect();
+                assert_eq!(again, b.sent, "{f}");
+                assert!(b.sent.iter().all(|n| ALWAYS_SENT.contains(&n.as_str()) || req.vars.contains(n)), "{f}");
+                if !with_characters {
+                    assert!(b.sent.iter().all(|n| !CHARACTER_DATA_VARIABLES.contains(&n.as_str())), "{f}");
+                }
+                println!("  sync with_characters={with_characters}: sends {:?}, {} bytes, leaves out {:?}", b.sent, b.body.len(), b.left_out);
+            }
+        }
+    }
+
+    #[test]
+    fn sync_answers() {
+        let r = |j: &str| serde_json::from_str::<SyncResponse>(j).unwrap();
+        assert_eq!(classify_sync(401, None), SyncResult::Unauthorized);
+        assert_eq!(classify_sync(429, None), SyncResult::Throttled);
+        assert_eq!(classify_sync(200, Some(&r(r#"{"wait": 30}"#))), SyncResult::Throttled);
+        assert_eq!(classify_sync(200, Some(&r(r#"{"error": false}"#))), SyncResult::Accepted);
+        assert_eq!(classify_sync(200, Some(&r("{}"))), SyncResult::Accepted);
+        assert_eq!(classify_sync(200, Some(&r(r#"{"error": true, "message": "no"}"#))), SyncResult::Rejected);
+        assert_eq!(classify_sync(200, None), SyncResult::Failed);
+        assert_eq!(classify_sync(503, None), SyncResult::Failed);
+        assert_eq!(classify_sync(400, None), SyncResult::Rejected);
+        assert_eq!(classify_sync(400, Some(&r(r#"{"message": null, "token": null}"#))), SyncResult::Rejected);
+        assert_eq!(describe_results(Some(&r(r#"{"results": {"wlProfileData": "stored", "wlX": 2}}"#))), " wlProfileData: stored. wlX: 2.");
+        assert_eq!(describe_results(Some(&r(r#"{"message": "ok"}"#))), " ok");
+        assert_eq!(describe_results(None), "");
     }
 }
 
@@ -1301,7 +2321,11 @@ pub fn dry_run(env: Arc<Env>) {
     if !i.cfg.lock().unwrap().imported_from_wine {
         println!("import from Wine: {:?}", i.import_from_wine());
     }
-    for g in i.games() {
+    let running = wow::running_games();
+    println!("running WoW clients: {:?}", running);
+    let games = i.games();
+    println!("locales for realm lists: {:?}", all_locales(&games));
+    for g in games {
         println!("{} ({}) {:?} -> {}", g.branch.display, g.flavor.folder, g.version, g.branch.short);
         for mut f in load_wdbs(&g) {
             let (data, n) = pack_wdb(&mut f);
@@ -1313,6 +2337,27 @@ pub fn dry_run(env: Arc<Env>) {
         }
         for f in load_looter_files(&g) {
             println!("  looter {} uploaded={} locale={} stats={:?}", f.account, f.uploaded, f.locale, f.stats);
+        }
+        if SYNC_BRANCHES.contains(&g.branch.id) {
+            let handled = load_handled();
+            for (account, sv) in g.flavor.accounts() {
+                let path = sv.join(LOOTER_SV);
+                let Ok(d) = fs::read(&path) else { continue };
+                let text = String::from_utf8_lossy(&d);
+                let blocks = split_top_level(text.trim_start_matches('\u{feff}'));
+                match blocks.iter().find(|(n, _)| n == "wlSyncRequest").and_then(|(_, b)| parse_sync_request(b)) {
+                    Some(r) => {
+                        let h = handled.get(&path_key(&path)).copied().unwrap_or(0);
+                        let what = match (r.time > h, wow::runs_in(&running, &g.flavor)) {
+                            (false, _) => "already handled",
+                            (true, true) => "would be sent now (this game runs)",
+                            (true, false) => "would be sent while this game runs",
+                        };
+                        println!("  sync {account}: request {} (version {}) vars {:?}, last handled {h}: {what}", r.time, r.version, r.vars);
+                    }
+                    None => println!("  sync {account}: no sync request"),
+                }
+            }
         }
     }
     match i.fetch_update() {

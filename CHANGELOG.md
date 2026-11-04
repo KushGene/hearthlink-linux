@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Wowhead: follows Wowhead Client 2.0.9801.37696
+
+- In-game sync for WoW Forever: the Looter's new Sync button sends your profile and
+  character data to Wowhead while you play, without closing the game. Hearthlink sees the
+  saved request and sends what it asks for to wowhead.com, like the Windows client. It only
+  runs while that game runs (Hearthlink now tells which WoW is running, so a running retail
+  client doesn't count), needs you to be logged in, and is on by default (Options:
+  "In-game sync for WoW Forever").
+- With character data off (or for an excluded account), uploads now also leave out
+  `wlProfileData` and `wlCharacterData` (the Looter's new Character Export part), not only
+  `wlExportData`. Before, these two were sent anyway.
+
 ## 1.1.0 (2026-11-03)
 
 ### New: ForeverWowCraft (WoW Forever)

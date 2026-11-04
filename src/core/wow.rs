@@ -189,19 +189,50 @@ pub fn detect_installs() -> Vec<PathBuf> {
     out
 }
 
+/// A running WoW client. `folder` is the flavour folder it runs from (e.g. `_forever_`),
+/// or None when that can't be told; such a client counts as running in every folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningGame {
+    pub folder: Option<String>,
+}
+
 /// True while a WoW client is running (under Wine/Proton the process shows up with its
 /// Windows executable name).
 pub fn game_running() -> bool {
+    !running_games().is_empty()
+}
+
+/// True when a running client belongs to this flavour folder (or to an unknown one), like
+/// the Windows client's per-branch check.
+pub fn runs_in(running: &[RunningGame], flavor: &Flavor) -> bool {
+    running.iter().any(|r| r.folder.as_deref().is_none_or(|f| f.eq_ignore_ascii_case(&flavor.folder)))
+}
+
+const WOW_EXES: [&str; 6] = ["wow.exe", "wowt.exe", "wowb.exe", "wowclassic.exe", "wowclassict.exe", "wowclassicb.exe"];
+
+/// The WoW clients running now, with the flavour folder each one runs from.
+pub fn running_games() -> Vec<RunningGame> {
     if super::install_kind() == super::Install::Flatpak {
         // The sandbox has its own /proc; ask the host.
-        return std::process::Command::new("flatpak-spawn")
-            .args(["--host", "pgrep", "-if", r"(^|[/\\])wow(classic)?[tb]?\.exe"])
-            .stdout(std::process::Stdio::null())
+        let out = std::process::Command::new("flatpak-spawn")
+            .args(["--host", "pgrep", "-ifa", r"(^|[/\\])wow(classic)?[tb]?\.exe"])
             .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success());
+            .output();
+        let Ok(out) = out else { return Vec::new() };
+        return String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| {
+                // "<pid> <command line>"; the arguments are joined with spaces, and the path
+                // itself may have spaces, so look for the executable name in it.
+                let cmd = l.trim_start().split_once(' ')?.1;
+                let lower = cmd.to_lowercase();
+                let end = WOW_EXES.iter().filter_map(|e| find_exe(&lower, e).map(|p| p + e.len())).min()?;
+                Some(RunningGame { folder: flavor_folder_of(&cmd[..end], None) })
+            })
+            .collect();
     }
-    let Ok(rd) = fs::read_dir("/proc") else { return false };
+    let Ok(rd) = fs::read_dir("/proc") else { return Vec::new() };
+    let mut out = Vec::new();
     for e in rd.flatten() {
         let name = e.file_name();
         let Some(name) = name.to_str() else { continue };
@@ -212,14 +243,68 @@ pub fn game_running() -> bool {
         let first = cmd.split(|b| *b == 0).next().unwrap_or_default();
         let exe = String::from_utf8_lossy(first);
         let base = exe.rsplit(['/', '\\']).next().unwrap_or("").to_lowercase();
-        if matches!(
-            base.as_str(),
-            "wow.exe" | "wowt.exe" | "wowb.exe" | "wowclassic.exe" | "wowclassict.exe" | "wowclassicb.exe"
-        ) {
-            return true;
+        if WOW_EXES.contains(&base.as_str()) {
+            // Wine starts the game in its folder, so the working directory says it too.
+            let cwd = fs::read_link(e.path().join("cwd")).ok();
+            out.push(RunningGame { folder: flavor_folder_of(&exe, cwd.as_deref()) });
         }
     }
-    false
+    out
+}
+
+/// Where `exe` (lowercase) appears in `cmd` as a file name, right after a path separator or
+/// at the start.
+fn find_exe(cmd: &str, exe: &str) -> Option<usize> {
+    cmd.match_indices(exe).map(|(i, _)| i).find(|&i| i == 0 || matches!(cmd.as_bytes()[i - 1], b'/' | b'\\'))
+}
+
+/// The flavour folder of a game executable path (Windows or Unix style), else of the
+/// process's working directory.
+fn flavor_folder_of(exe: &str, cwd: Option<&Path>) -> Option<String> {
+    let is_flavor = |s: &str| s.len() > 2 && s.starts_with('_') && s.ends_with('_');
+    let mut parts = exe.rsplit(['/', '\\']);
+    parts.next();
+    if let Some(dir) = parts.next().filter(|d| is_flavor(d)) {
+        return Some(dir.to_string());
+    }
+    let dir = cwd?.file_name()?.to_string_lossy().into_owned();
+    is_flavor(&dir).then_some(dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flavor_of_running_game() {
+        let cwd = Path::new("/home/u/Games/World of Warcraft/_retail_");
+        assert_eq!(flavor_folder_of(r"X:\Games\World of Warcraft\_forever_\WowClassic.exe", Some(cwd)).as_deref(), Some("_forever_"));
+        assert_eq!(flavor_folder_of("/home/u/wow/_classic_beta_/WowClassicB.exe", None).as_deref(), Some("_classic_beta_"));
+        // Started by a bare or relative name: the working directory tells.
+        assert_eq!(flavor_folder_of("WoW.exe", Some(cwd)).as_deref(), Some("_retail_"));
+        assert_eq!(flavor_folder_of("./WoW.exe", Some(cwd)).as_deref(), Some("_retail_"));
+        assert_eq!(flavor_folder_of("WoW.exe", Some(Path::new("/home/u"))), None);
+        assert_eq!(flavor_folder_of("WoW.exe", None), None);
+
+        let f = |folder: &str| Flavor { folder: folder.into(), path: PathBuf::from("/x").join(folder) };
+        let retail = [RunningGame { folder: Some("_retail_".into()) }];
+        assert!(runs_in(&retail, &f("_retail_")));
+        assert!(!runs_in(&retail, &f("_forever_")));
+        assert!(!runs_in(&[], &f("_forever_")));
+        // Unknown folder: counts everywhere, as before.
+        assert!(runs_in(&[RunningGame { folder: None }], &f("_forever_")));
+        assert!(runs_in(&[RunningGame { folder: Some("_FOREVER_".into()) }], &f("_forever_")));
+    }
+
+    #[test]
+    fn exe_in_pgrep_line() {
+        let cmd = r"X:\Games\World of Warcraft\_forever_\WowClassic.exe -launcherlogin -uid wow_forever";
+        let lower = cmd.to_lowercase();
+        let end = WOW_EXES.iter().filter_map(|e| find_exe(&lower, e).map(|p| p + e.len())).min().unwrap();
+        assert_eq!(flavor_folder_of(&cmd[..end], None).as_deref(), Some("_forever_"));
+        // "wow.exe" inside "mywow.exe" is not the game.
+        assert_eq!(find_exe("c:\\mywow.exe", "wow.exe"), None);
+    }
 }
 
 /// Maps a Windows path from a Wine prefix (e.g. `X:\Games\World of Warcraft`) to the Linux
