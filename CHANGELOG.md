@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.3.0 (2026-11-07)
+
+### New: TradeSkillMaster
+
+- Hearthlink installs, updates and starts the official TradeSkillMaster app for Linux: it
+  downloads the AppImage from TSM's update server (checked against the SHA-512 listed there),
+  or takes a matching one from Downloads / `~/Applications`, and unpacks it, so it runs
+  without FUSE/libfuse2 and from the Flatpak.
+- Adds TradeSkillMaster with its icons to the app menu (`TradeSkillMaster.desktop`, the app's
+  own desktop name, so its window gets the icon too). A TSM menu entry from another install is
+  left alone.
+- The app is tied to Hearthlink: it starts with Hearthlink and closes with it (also when
+  Hearthlink is killed), and closes when the service is turned off. The app's own "Run at
+  startup" entry is removed; the menu entry runs `hearthlink --open-tsm`, which opens it
+  through the running Hearthlink (or starts Hearthlink).
+- New versions are checked every 6 hours; the app is restarted to put one in place.
+- "Open the app" on the overview and in the tray.
+- Apps Hearthlink starts get the session's `WAYLAND_DISPLAY` back (Hearthlink drops it for
+  itself to run through XWayland); without it Electron gave up on Wayland sessions.
+- Off until turned on (the app is about 150 MB).
+
 ## 1.2.0 (2026-11-05)
 
 ### Wowhead: follows Wowhead Client 2.0.9801.37696

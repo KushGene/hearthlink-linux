@@ -3,7 +3,7 @@
 # Hearthlink: WoW data uploader for Linux
 
 **Looking for the Wowhead Client, the WowUtils Bridge, the wowaudit client, the ForeverDB
-Uploader or the ForeverWowCraft Helper on Linux?** Hearthlink does their job in one app with a tray icon, on any Linux
+Uploader, the ForeverWowCraft Helper or the TradeSkillMaster app on Linux?** Hearthlink does their job in one app with a tray icon, on any Linux
 distribution, with the game running through Lutris, Wine, Bottles or Steam/Proton.
 
 | Service | What Hearthlink does | Windows app it replaces |
@@ -13,6 +13,7 @@ distribution, with the game running through Lutris, Wine, Bottles or Steam/Proto
 | **ForeverDB** | Installs, updates and runs ForeverDB's official Linux uploader (WoW Forever) | ForeverDB Uploader |
 | **ForeverWowCraft** | Installs, updates and runs the official ForeverWowCraft Helper (WoW Forever): sends the auction prices the addon saves, writes your profession routes into the game, keeps the addon installed | ForeverWowCraft Helper |
 | **wowaudit** | Writes your team's wishlists into RCLootCouncil (wowaudit module) / SimpleLootCouncil; sends RCLootCouncil loot history and WowauditCompanion data | wowaudit desktop client |
+| **TradeSkillMaster** | Installs, updates and starts TSM's official Linux app, with an app menu entry and its icon | TradeSkillMaster app |
 
 > **About wowaudit:** I don't use wowaudit myself, so this part is untested on my side: it was
 > built from how the wowaudit desktop client works and checked against wowaudit's API where
@@ -74,6 +75,22 @@ and the routes, so it carries on under the same name.
 - **RCLootCouncil** (optional): its loot history goes to the raid groups you tick under
   WowUtils → Loot history, if a group admin allowed importing for the group.
 
+## TradeSkillMaster
+
+TradeSkillMaster makes its own Linux app (an AppImage). Turn the service on and Hearthlink
+downloads it from TSM's update server (the one the app's own updater uses), checks it against
+the SHA-512 listed there, unpacks it to `~/.local/share/hearthlink/tsm` and adds
+**TradeSkillMaster** with its icon to your app menu. If a matching
+`TradeSkillMaster*.AppImage` is already in Downloads or `~/Applications`, that one is used
+instead of downloading it again. Unpacked, it runs without FUSE/libfuse2 and also from the
+Flatpak. The app is tied to Hearthlink: while the service is on, it starts with Hearthlink and closes
+with it (also if Hearthlink crashes). Its own "Run at startup" entry is removed, since
+Hearthlink starts it; the menu entry opens it through Hearthlink. Closing its window keeps it
+working in its tray icon. Hearthlink checks for a new version every 6 hours and restarts the
+app to put it in place. Sign in, choose the game folder and pick realms in the app itself; its
+settings stay in `~/.config/TradeSkillMaster`. The service is off until you turn it on (the app
+is about 150 MB).
+
 ## ForeverWowCraft and Python
 
 The [ForeverWowCraft Helper](https://github.com/ForeverWowCraft/ForeverWowCraft-Helper) is open
@@ -120,10 +137,11 @@ log (the service's page in Hearthlink) and your distribution help a lot.
 ## Disclaimer
 
 Hearthlink is a community project. It is not made by, endorsed by or affiliated with
-Blizzard Entertainment, Wowhead, WowUtils, wowaudit, ForeverDB or ForeverWowCraft. World of
+Blizzard Entertainment, Wowhead, WowUtils, wowaudit, ForeverDB, ForeverWowCraft or TradeSkillMaster. World of
 Warcraft is a trademark of Blizzard Entertainment. Icons: [Phosphor](https://phosphoricons.com)
 (MIT). The ForeverWowCraft logo belongs to ForeverWowCraft and is used to show which service a
-page is about. The ForeverWowCraft Helper and its addons (MIT, (c) 2026 ForeverWowCraft) are not
+page is about; the same goes for the TradeSkillMaster logo. The TradeSkillMaster app is not part of
+Hearthlink: Hearthlink downloads the official one. The ForeverWowCraft Helper and its addons (MIT, (c) 2026 ForeverWowCraft) are not
 part of Hearthlink: Hearthlink downloads the official release.
 
 License: MIT

@@ -469,7 +469,7 @@ impl App {
                                 if ui.button(ib(icon::ARROW_RIGHT, "Open")).clicked() {
                                     self.page = Page::Service(i);
                                 }
-                                if enabled && ui.add_enabled(!s.common().is_busy(), egui::Button::new(ib(icon::UPLOAD, "Upload now"))).clicked() {
+                                if enabled && ui.add_enabled(!s.common().is_busy(), egui::Button::new(ib(s.action_icon(), s.action_label()))).clicked() {
                                     s.upload_now();
                                 }
                             });

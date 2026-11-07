@@ -39,6 +39,71 @@ pub fn install_kind() -> Install {
     }
 }
 
+/// The session's WAYLAND_DISPLAY, which Hearthlink drops for itself (it runs through XWayland
+/// to hide to the tray). Apps it starts need it back: Electron on a Wayland session gives up
+/// without it.
+pub static SESSION_WAYLAND_DISPLAY: std::sync::OnceLock<std::ffi::OsString> = std::sync::OnceLock::new();
+
+/// The command that starts this copy of Hearthlink, for desktop entries.
+pub fn self_exec() -> String {
+    match install_kind() {
+        Install::Flatpak => format!("flatpak run {DESKTOP_ID}"),
+        // The AppImage's own path, not the temporary mount it runs from.
+        Install::AppImage => format!("\"{}\"", std::env::var("APPIMAGE").unwrap_or_default()),
+        _ => {
+            let exe = std::env::current_exe().map(|e| e.display().to_string()).unwrap_or_else(|_| "hearthlink".into());
+            format!("\"{exe}\"")
+        }
+    }
+}
+
+/// A command that runs on the host: in the Flatpak through `flatpak-spawn --host` (in `dir`,
+/// when given), elsewhere as it is.
+pub fn host_command(program: &std::path::Path, dir: Option<&std::path::Path>) -> std::process::Command {
+    if install_kind() == Install::Flatpak {
+        let mut c = std::process::Command::new("flatpak-spawn");
+        c.arg("--host");
+        if let Some(d) = dir {
+            c.arg(format!("--directory={}", d.display()));
+        }
+        c.arg(program);
+        c
+    } else {
+        let mut c = std::process::Command::new(program);
+        if let Some(d) = dir {
+            c.current_dir(d);
+        }
+        c
+    }
+}
+
+/// True while a process with this name runs (`comm`: at most 15 characters, as the kernel
+/// keeps it). In the Flatpak the host is asked, since the sandbox has its own /proc.
+pub fn process_running(comm: &str) -> bool {
+    if install_kind() == Install::Flatpak {
+        return std::process::Command::new("flatpak-spawn")
+            .args(["--host", "pgrep", "-x", comm])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+    }
+    let Ok(rd) = std::fs::read_dir("/proc") else { return false };
+    rd.flatten().any(|e| {
+        e.file_name().to_str().is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()))
+            && std::fs::read_to_string(e.path().join("comm")).is_ok_and(|c| c.trim_end() == comm)
+    })
+}
+
+/// The host's ~/.local/share (in the Flatpak, XDG_DATA_HOME points into the sandbox's own).
+pub fn host_data_dir() -> PathBuf {
+    if install_kind() == Install::Flatpak {
+        dirs::home_dir().unwrap_or_default().join(".local/share")
+    } else {
+        dirs::data_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".local/share"))
+    }
+}
+
 pub fn now_unix() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }

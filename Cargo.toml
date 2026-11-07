@@ -1,8 +1,8 @@
 [package]
 name = "hearthlink"
-version = "1.2.0"
+version = "1.3.0"
 edition = "2021"
-description = "Linux uploader for World of Warcraft addon data: Wowhead, WowUtils, wowaudit, ForeverDB and ForeverWowCraft in one app"
+description = "Linux uploader for World of Warcraft addon data: Wowhead, WowUtils, wowaudit, ForeverDB, ForeverWowCraft and TradeSkillMaster in one app"
 license = "MIT"
 authors = ["KushGene"]
 homepage = "https://github.com/KushGene/hearthlink-linux"
@@ -64,7 +64,7 @@ section = "games"
 priority = "optional"
 # The ForeverWowCraft Helper Hearthlink runs is Python.
 depends = "$auto, python3 (>= 3.10)"
-extended-description = "One app with a tray icon for the World of Warcraft data uploaders: Wowhead, WowUtils, wowaudit, ForeverDB and ForeverWowCraft."
+extended-description = "One app with a tray icon for the World of Warcraft data uploaders: Wowhead, WowUtils, wowaudit, ForeverDB, ForeverWowCraft and TradeSkillMaster."
 assets = [
     ["target/release/hearthlink", "usr/bin/", "755"],
     ["packaging/io.github.kushgene.Hearthlink.desktop", "usr/share/applications/", "644"],

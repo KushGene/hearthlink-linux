@@ -10,13 +10,18 @@ use std::sync::Arc;
 
 pub const APP_ICON: &[u8] = include_bytes!("../assets/icons/app.png");
 
-fn single_instance() -> Option<std::os::unix::net::UnixListener> {
+/// What a second start asks the running instance for (one line on the socket).
+const OPEN_TSM: &str = "open-tsm";
+
+fn single_instance(request: &str) -> Option<std::os::unix::net::UnixListener> {
     let sock = std::env::var_os("XDG_RUNTIME_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
         .join("hearthlink.sock");
-    if std::os::unix::net::UnixStream::connect(&sock).is_ok() {
-        return None; // another instance answered: it shows its window
+    if let Ok(mut s) = std::os::unix::net::UnixStream::connect(&sock) {
+        use std::io::Write;
+        let _ = writeln!(s, "{request}");
+        return None; // another instance answered: it shows its window (or opens TSM)
     }
     let _ = std::fs::remove_file(&sock);
     std::os::unix::net::UnixListener::bind(&sock).ok()
@@ -25,18 +30,24 @@ fn single_instance() -> Option<std::os::unix::net::UnixListener> {
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let minimized_arg = args.iter().any(|a| a == "--minimized");
+    // From the TradeSkillMaster menu entry: TSM runs tied to Hearthlink.
+    let open_tsm = args.iter().any(|a| a == "--open-tsm");
     if args.iter().any(|a| a == "--wowhead-dry-run") {
         services::wowhead::dry_run(core::Env::load());
         return Ok(());
     }
-    let Some(listener) = single_instance() else {
-        eprintln!("Hearthlink is already running; showing its window.");
+    let Some(listener) = single_instance(if open_tsm { OPEN_TSM } else { "show" }) else {
+        eprintln!("Hearthlink is already running; {}.", if open_tsm { "it opens TradeSkillMaster" } else { "showing its window" });
         return Ok(());
     };
     // Hiding to the tray needs a window that can be hidden; on Wayland that isn't
     // possible, so the app runs through XWayland unless asked otherwise.
     let wayland = std::env::var_os("HEARTHLINK_WAYLAND").is_some() && std::env::var_os("WAYLAND_DISPLAY").is_some();
     if !wayland && std::env::var_os("DISPLAY").is_some() {
+        // Apps Hearthlink starts (TradeSkillMaster) get it back.
+        if let Some(w) = std::env::var_os("WAYLAND_DISPLAY") {
+            let _ = core::SESSION_WAYLAND_DISPLAY.set(w);
+        }
         // SAFETY: single-threaded at this point.
         unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
     }
@@ -46,14 +57,33 @@ fn main() -> eframe::Result<()> {
     for s in &services {
         s.start();
     }
+    let tsm = services.iter().find(|s| s.meta().id == services::tsm::META.id).cloned();
+    // Opens TSM when it is turned on; otherwise shows Hearthlink (where it can be turned on).
+    let open_tsm_or_show = {
+        let tsm = tsm.clone();
+        move |show: &AtomicBool| match &tsm {
+            Some(t) if t.enabled() => t.upload_now(),
+            _ => show.store(true, std::sync::atomic::Ordering::SeqCst),
+        }
+    };
     let show = Arc::new(AtomicBool::new(false));
     let quit = Arc::new(AtomicBool::new(false));
+    if open_tsm {
+        open_tsm_or_show(&show);
+    }
     {
         let show = show.clone();
         let env = env.clone();
         std::thread::spawn(move || {
-            for _ in listener.incoming().flatten() {
-                show.store(true, std::sync::atomic::Ordering::SeqCst);
+            for stream in listener.incoming().flatten() {
+                use std::io::BufRead;
+                let mut line = String::new();
+                let _ = std::io::BufReader::new(stream).read_line(&mut line);
+                if line.trim() == OPEN_TSM {
+                    open_tsm_or_show(&show);
+                } else {
+                    show.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
                 if let Some(c) = env.ctx.lock().unwrap().as_ref() {
                     c.request_repaint();
                 }
@@ -66,7 +96,7 @@ fn main() -> eframe::Result<()> {
     }
     let updates = Arc::new(update::Updates::default());
     update::start(env.clone(), updates.clone());
-    let start_hidden = minimized_arg || env.config.read().unwrap().start_minimized;
+    let start_hidden = minimized_arg || (open_tsm && tsm.as_ref().is_some_and(|t| t.enabled())) || env.config.read().unwrap().start_minimized;
     let icon = image::load_from_memory(APP_ICON).ok().map(|i| {
         let i = i.to_rgba8();
         eframe::egui::IconData { width: i.width(), height: i.height(), rgba: i.into_raw() }

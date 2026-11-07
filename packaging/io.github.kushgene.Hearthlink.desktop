@@ -2,11 +2,11 @@
 Type=Application
 Name=Hearthlink
 GenericName=WoW Data Uploader
-Comment=Uploads World of Warcraft addon data to Wowhead, WowUtils, wowaudit, ForeverDB and ForeverWowCraft
+Comment=Uploads World of Warcraft addon data to Wowhead, WowUtils, wowaudit, ForeverDB and ForeverWowCraft, and runs the TradeSkillMaster app
 Exec=hearthlink
 Icon=io.github.kushgene.Hearthlink
 Terminal=false
 Categories=Game;
-Keywords=wow;warcraft;wowhead;wowutils;wowaudit;foreverdb;foreverwowcraft;uploader;addon;
+Keywords=wow;warcraft;wowhead;wowutils;wowaudit;foreverdb;foreverwowcraft;tsm;tradeskillmaster;uploader;addon;
 StartupNotify=true
 StartupWMClass=io.github.kushgene.Hearthlink

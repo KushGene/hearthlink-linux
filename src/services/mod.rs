@@ -1,5 +1,6 @@
 pub mod foreverdb;
 pub mod foreverwowcraft;
+pub mod tsm;
 pub mod wowaudit;
 pub mod wowhead;
 pub mod wowutils;
@@ -39,6 +40,17 @@ pub trait Service: Send + Sync {
     }
     /// "Upload now" from the tray.
     fn upload_now(&self) {}
+    /// What `upload_now` is called on the overview card.
+    fn action_label(&self) -> &'static str {
+        "Upload now"
+    }
+    fn action_icon(&self) -> &'static str {
+        crate::ui::icon::UPLOAD
+    }
+    /// What `upload_now` is called in the tray menu.
+    fn tray_label(&self) -> String {
+        format!("    Upload to {} now", self.meta().name)
+    }
 }
 
 pub fn all(env: &Arc<Env>) -> Vec<Arc<dyn Service>> {
@@ -48,6 +60,7 @@ pub fn all(env: &Arc<Env>) -> Vec<Arc<dyn Service>> {
         Arc::new(wowhead::Wowhead::new(env.clone())),
         Arc::new(wowutils::WowUtils::new(env.clone())),
         Arc::new(wowaudit::WowAudit::new(env.clone())),
+        Arc::new(tsm::Tsm::new(env.clone())),
     ]
 }
 

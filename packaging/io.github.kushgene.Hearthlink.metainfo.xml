@@ -19,6 +19,7 @@
       <li>ForeverDB: installs, updates and runs ForeverDB's official Linux uploader</li>
       <li>ForeverWowCraft: installs, updates and runs the official ForeverWowCraft Helper, which sends auction prices and writes profession routes into the game</li>
       <li>wowaudit: brings your team's wishlists into the game and sends loot history and companion data (like the wowaudit desktop client)</li>
+      <li>TradeSkillMaster: installs, updates and starts TSM's official Linux app, with an app menu entry</li>
     </ul>
     <p>
       It finds your game in Lutris, Wine, Bottles and Steam/Proton folders, and tells you when
@@ -26,7 +27,7 @@
     </p>
     <p>
       Hearthlink is a community project, not made by or affiliated with Blizzard Entertainment,
-      Wowhead, WowUtils, wowaudit, ForeverDB or ForeverWowCraft.
+      Wowhead, WowUtils, wowaudit, ForeverDB, ForeverWowCraft or TradeSkillMaster.
     </p>
   </description>
   <launchable type="desktop-id">io.github.kushgene.Hearthlink.desktop</launchable>
@@ -55,6 +56,7 @@
     <keyword>wowaudit</keyword>
     <keyword>ForeverDB</keyword>
     <keyword>ForeverWowCraft</keyword>
+    <keyword>TradeSkillMaster</keyword>
     <keyword>uploader</keyword>
   </keywords>
   <provides>
@@ -69,6 +71,12 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.3.0" date="2026-11-07">
+      <description>
+        <p>New: TradeSkillMaster. Hearthlink installs, updates and runs TSM's official Linux app, checked against the SHA-512 TSM lists for it, and adds it with its icon to the app menu. The app starts and closes with Hearthlink.</p>
+        <p>Apps Hearthlink starts now work on Wayland sessions.</p>
+      </description>
+    </release>
     <release version="1.2.0" date="2026-11-05">
       <description>
         <p>Wowhead follows Wowhead Client 2.0.9801.37696: in-game sync for WoW Forever. The Looter's Sync button sends your profile and character data to Wowhead while you play. It only runs while WoW Forever runs and you are logged in, and can be turned off in the options.</p>

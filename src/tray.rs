@@ -71,7 +71,7 @@ impl ksni::Tray for Tray {
             );
             items.push(
                 StandardItem {
-                    label: format!("    Upload to {} now", s.meta().name),
+                    label: s.tray_label(),
                     activate: Box::new(move |t: &mut Self| t.services[i].upload_now()),
                     ..Default::default()
                 }
