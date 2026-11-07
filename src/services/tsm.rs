@@ -45,6 +45,8 @@ const DESKTOP_FILE: &str = "TradeSkillMaster.desktop";
 const ICON_NAME: &str = "tradeskillmaster";
 /// Marks a menu entry as Hearthlink's (others are left alone).
 const MARK: &str = "X-Hearthlink=true";
+/// The feed version Hearthlink installed, written into the unpacked app.
+const VERSION_FILE: &str = ".hearthlink-version";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -75,6 +77,8 @@ struct Inner {
     /// Facts for the page, refreshed by the worker (the page must not touch /proc or the disk).
     running: Mutex<bool>,
     version: Mutex<Option<String>>,
+    /// Someone else's TradeSkillMaster menu entry, if there is one.
+    foreign_entry: Mutex<Option<PathBuf>>,
     /// The app Hearthlink started, and when.
     child: Mutex<Option<(Child, Instant)>>,
     /// "Open the app" was asked for (the worker starts it, so it is tied to a thread that lives
@@ -87,7 +91,8 @@ impl Tsm {
         let first = !store::config_dir().join("tsm.json").exists();
         let mut cfg: Config = store::load("tsm");
         if first {
-            // Off until turned on: turning it on downloads a 150 MB app.
+            // The menu entry is on by default; the service itself stays off until turned on
+            // (turning it on downloads a 150 MB app).
             cfg.menu_entry = true;
             store::save("tsm", &cfg);
         }
@@ -96,10 +101,13 @@ impl Tsm {
             inner: Arc::new(Inner {
                 common: Arc::new(Common::default()),
                 cfg: Mutex::new(cfg),
-                http: core::http_client(&ua, 900),
+                // The blocking client's timeout applies to each read of the body, not to the
+                // whole download, so it only catches a stalled connection.
+                http: core::http_client(&ua, 60),
                 latest: Mutex::new(None),
                 running: Mutex::new(false),
                 version: Mutex::new(installed_version()),
+                foreign_entry: Mutex::new(None),
                 child: Mutex::new(None),
                 want_open: AtomicBool::new(false),
             }),
@@ -127,27 +135,48 @@ fn icons_dir() -> PathBuf {
     core::host_data_dir().join("icons/hicolor")
 }
 
-/// The version of the unpacked app in `dir` (X-AppImage-Version of its desktop file).
+/// The version of the unpacked app in `dir`: the one Hearthlink noted when installing it, or
+/// else X-AppImage-Version of the app's desktop file (whatever its name's case).
 fn version_in(dir: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(dir.join(DESKTOP_FILE)).ok()?;
-    text.lines().find_map(|l| l.strip_prefix("X-AppImage-Version=")).map(|v| v.trim().to_string())
-}
-
-fn installed_version() -> Option<String> {
-    if !app_run().is_file() {
-        return None;
+    if let Some(v) = std::fs::read_to_string(dir.join(VERSION_FILE)).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) {
+        return Some(v);
     }
-    version_in(&app_dir())
-}
-
-/// The app's own autostart entry (its "Run at startup" setting, via auto-launch).
-fn own_autostart() -> Option<PathBuf> {
-    let dir = dirs::home_dir().unwrap_or_default().join(".config/autostart");
     std::fs::read_dir(dir)
         .ok()?
         .flatten()
         .map(|e| e.path())
-        .find(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.to_lowercase().starts_with("tradeskillmaster")))
+        .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("desktop")))
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .find_map(|t| t.lines().find_map(|l| l.strip_prefix("X-AppImage-Version=")).map(|v| v.trim().to_string()))
+}
+
+/// True when the app is installed (it can be started).
+pub fn installed() -> bool {
+    app_run().is_file()
+}
+
+fn installed_version() -> Option<String> {
+    if !installed() {
+        return None;
+    }
+    // An app that doesn't say its version is still installed (it is updated at the next check).
+    Some(version_in(&app_dir()).unwrap_or_else(|| "unknown".into()))
+}
+
+/// The app's own autostart entries (its "Run at startup" setting, via auto-launch).
+fn own_autostarts() -> Vec<PathBuf> {
+    let dir = core::host_config_dir().join("autostart");
+    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+    rd.flatten()
+        .map(|e| e.path())
+        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.to_lowercase().starts_with("tradeskillmaster")))
+        .collect()
+}
+
+/// Removes the app's own autostart entries that start Hearthlink's copy. True if any was.
+fn remove_own_autostarts() -> bool {
+    // count(), not any(): every one of them goes.
+    own_autostarts().iter().filter(|a| own_autostart_is_ours(a) && std::fs::remove_file(a).is_ok()).count() > 0
 }
 
 /// True when the app's own autostart entry starts Hearthlink's copy (removed: Hearthlink
@@ -191,6 +220,39 @@ fn local_copies(size: u64) -> Vec<PathBuf> {
         .collect()
 }
 
+/// The command that starts the app (on the host, with the session's WAYLAND_DISPLAY back).
+/// `tied`: in the Flatpak, the host app ends when Hearthlink's flatpak-spawn does.
+fn app_command(tied: bool) -> std::process::Command {
+    let wayland: Vec<(&str, &std::ffi::OsStr)> =
+        core::SESSION_WAYLAND_DISPLAY.get().map(|w| ("WAYLAND_DISPLAY", w.as_os_str())).into_iter().collect();
+    core::host_app_command(&app_run(), Some(&app_dir()), &wayland, tied)
+}
+
+/// Waits up to `limit` for every process of the app to end. True when none is left.
+fn wait_gone(limit: Duration) -> bool {
+    let until = Instant::now() + limit;
+    loop {
+        if !core::process_running(PROCESS) {
+            return true;
+        }
+        if Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// Asks every process of the app to end (one started without Hearthlink, or helpers left
+/// behind) and waits for them. True when none is left.
+fn close_all() -> bool {
+    let _ = core::host_command(Path::new("pkill"), None)
+        .args(["-TERM", "-x", PROCESS])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    wait_gone(Duration::from_secs(10))
+}
+
 fn sha512_b64_of(path: &Path) -> std::io::Result<String> {
     use base64::Engine;
     use sha2::Digest;
@@ -215,6 +277,8 @@ impl Inner {
     fn refresh_facts(&self) {
         *self.running.lock().unwrap() = core::process_running(PROCESS);
         *self.version.lock().unwrap() = installed_version();
+        let entry = menu_entry_path();
+        *self.foreign_entry.lock().unwrap() = (entry.exists() && !Self::is_ours(&entry)).then_some(entry);
         self.common.repaint();
     }
 
@@ -242,7 +306,8 @@ impl Inner {
         use base64::Engine;
         use sha2::Digest;
         let mut resp = self.http.get(&r.url).send()?.error_for_status()?;
-        let total = resp.content_length().unwrap_or(r.size).max(1);
+        // The size, if the server or the feed says it (else progress is shown in MB).
+        let total = resp.content_length().filter(|&n| n > 0).or((r.size > 0).then_some(r.size));
         let mut out = std::fs::File::create(to)?;
         let mut h = sha2::Sha512::new();
         let mut buf = vec![0u8; 1 << 16];
@@ -255,10 +320,19 @@ impl Inner {
             out.write_all(&buf[..n])?;
             h.update(&buf[..n]);
             done += n as u64;
-            let pct = done * 100 / total;
-            if pct >= shown + 5 {
-                shown = pct;
-                c.set_health(Health::Busy, format!("Downloading TradeSkillMaster {}… {pct}%", r.version));
+            let (step, text) = match total {
+                Some(t) => {
+                    let pct = (done * 100 / t).min(100);
+                    (pct / 5, format!("{pct}%"))
+                }
+                None => {
+                    let mb = done >> 20;
+                    (mb / 10, format!("{mb} MB"))
+                }
+            };
+            if step != shown {
+                shown = step;
+                c.set_health(Health::Busy, format!("Downloading TradeSkillMaster {}… {text}", r.version));
             }
         }
         out.flush()?;
@@ -290,6 +364,8 @@ impl Inner {
             if !got.is_empty() && got != r.version {
                 c.warn(format!("The AppImage says it is version {got}, the feed said {}.", r.version));
             }
+            // The feed's version, so the next check compares like with like.
+            std::fs::write(root.join(VERSION_FILE), &r.version)?;
             let _ = std::fs::remove_dir_all(staged_dir());
             std::fs::rename(&root, staged_dir())?;
             Ok(())
@@ -418,6 +494,12 @@ impl Inner {
     /// Starts the app, tied to the calling thread (the worker): it gets SIGTERM when that
     /// thread ends, i.e. when Hearthlink quits or dies. What it prints goes to tsm/launch.log.
     fn launch(&self) {
+        // Held while starting, so remove() (which turns the service off first and then stops
+        // the app) either sees the new app or keeps it from starting.
+        let mut guard = self.child.lock().unwrap();
+        if !self.cfg.lock().unwrap().enabled {
+            return;
+        }
         if !app_run().is_file() {
             self.common.warn("TradeSkillMaster isn't installed yet.");
             return;
@@ -427,11 +509,8 @@ impl Inner {
             Ok((a, b)) => (Stdio::from(a), Stdio::from(b)),
             Err(_) => (Stdio::null(), Stdio::null()),
         };
-        let mut cmd = core::host_command(&app_run(), Some(&app_dir()));
+        let mut cmd = app_command(true);
         cmd.stdin(Stdio::null()).stdout(out).stderr(err);
-        if let Some(w) = core::SESSION_WAYLAND_DISPLAY.get() {
-            cmd.env("WAYLAND_DISPLAY", w);
-        }
         unsafe {
             use std::os::unix::process::CommandExt;
             cmd.pre_exec(|| {
@@ -445,7 +524,7 @@ impl Inner {
         match cmd.spawn() {
             Ok(child) => {
                 self.common.info("Starting TradeSkillMaster…");
-                *self.child.lock().unwrap() = Some((child, Instant::now()));
+                *guard = Some((child, Instant::now()));
             }
             Err(e) => self.common.error(format!("Couldn't start TradeSkillMaster: {e}")),
         }
@@ -473,32 +552,40 @@ impl Inner {
         }
     }
 
-    /// Closes the app Hearthlink started (SIGTERM, then SIGKILL after 10 s).
+    /// Closes the app Hearthlink started (SIGTERM to its process group, then SIGKILL after
+    /// 10 s), and waits a little for the app's other processes to end.
     fn stop(&self) {
         let Some((mut child, _)) = self.child.lock().unwrap().take() else { return };
-        if child.try_wait().ok().flatten().is_some() {
-            return;
-        }
-        unsafe {
-            libc::kill(child.id() as i32, libc::SIGTERM);
-        }
-        for _ in 0..100 {
-            if child.try_wait().ok().flatten().is_some() {
-                return;
+        if child.try_wait().ok().flatten().is_none() {
+            // It runs in its own session (setsid), so its id is also its process group's.
+            let group = -(child.id() as i32);
+            unsafe {
+                libc::kill(group, libc::SIGTERM);
             }
-            std::thread::sleep(Duration::from_millis(100));
+            let mut ended = false;
+            for _ in 0..100 {
+                if child.try_wait().ok().flatten().is_some() {
+                    ended = true;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            if !ended {
+                unsafe {
+                    libc::kill(group, libc::SIGKILL);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+            }
         }
-        let _ = child.kill();
-        let _ = child.wait();
+        // Electron's helpers (same process name) can outlive the main process for a moment.
+        wait_gone(Duration::from_secs(10));
     }
 
     /// Brings up the running app's window: a second start hands over to it and ends at once.
     fn show_window(&self) {
-        let mut cmd = core::host_command(&app_run(), Some(&app_dir()));
+        let mut cmd = app_command(false);
         cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-        if let Some(w) = core::SESSION_WAYLAND_DISPLAY.get() {
-            cmd.env("WAYLAND_DISPLAY", w);
-        }
         if let Ok(mut c) = cmd.spawn() {
             std::thread::spawn(move || {
                 let _ = c.wait();
@@ -507,20 +594,17 @@ impl Inner {
     }
 
     fn remove(&self) {
+        // Off first, so the worker doesn't start the app again meanwhile (launch() checks).
+        self.cfg.lock().unwrap().enabled = false;
+        self.save();
         self.stop();
         if core::process_running(PROCESS) {
-            self.common.warn("Close TradeSkillMaster first.");
+            self.common.warn("TradeSkillMaster was turned off, but it is still running: close it, then remove the app.");
+            self.refresh_facts();
             return;
         }
-        {
-            let mut cfg = self.cfg.lock().unwrap();
-            cfg.enabled = false;
-        }
-        self.save();
         self.sync_menu_entry(false);
-        if let Some(a) = own_autostart().filter(|a| own_autostart_is_ours(a)) {
-            let _ = std::fs::remove_file(a);
-        }
+        remove_own_autostarts();
         match std::fs::remove_dir_all(base_dir()) {
             Ok(()) => self.common.good("Removed the TradeSkillMaster app (its own settings in ~/.config/TradeSkillMaster are kept)."),
             Err(e) => self.common.error(format!("Couldn't remove the app: {e}")),
@@ -532,6 +616,9 @@ impl Inner {
         let c = self.common.clone();
         let mut last_check = 0i64;
         let mut first = true;
+        // A restart couldn't put the update in place: don't keep restarting the app for it
+        // (it goes in at the next start of Hearthlink, or of the app).
+        let mut restart_failed = false;
         loop {
             let cfg = self.cfg.lock().unwrap().clone();
             self.sync_menu_entry(false);
@@ -575,23 +662,41 @@ impl Inner {
                     Err(e) => c.warn(format!("Couldn't check for a new TradeSkillMaster: {}", core::friendly_error(&e))),
                 }
             }
-            // An update waiting: restart the app Hearthlink runs to put it in place.
-            let mut restart = false;
-            if staged_dir().exists() && self.ours_running() && !c.is_busy() {
-                c.info("Restarting TradeSkillMaster to put the new version in place…");
-                self.stop();
-                restart = true;
+            // An update waiting: restart the app Hearthlink runs to put it in place. Moving the
+            // folders runs as an exclusive job, so it can't overlap an install from the page.
+            if !staged_dir().exists() {
+                restart_failed = false;
             }
-            if let Err(e) = self.swap_in() {
-                c.error(format!("Couldn't put the new TradeSkillMaster in place: {e}"));
+            let mut restart = false;
+            let swapped = if staged_dir().exists() && self.ours_running() && !restart_failed {
+                c.exclusive(|| {
+                    c.info("Restarting TradeSkillMaster to put the new version in place…");
+                    self.stop();
+                    if !wait_gone(Duration::ZERO) {
+                        close_all(); // helpers that outlived it
+                    }
+                    restart = true;
+                    self.swap_in()
+                })
+            } else {
+                c.exclusive(|| self.swap_in())
+            };
+            match swapped {
+                Some(Ok(false)) if restart => {
+                    restart_failed = true;
+                    c.warn("TradeSkillMaster didn't close completely, so the new version is put in place at its next start.");
+                }
+                Some(Err(e)) => c.error(format!("Couldn't put the new TradeSkillMaster in place: {e}")),
+                _ => {}
             }
             // Hearthlink starts it, so the app's own autostart would start a second, untied one.
-            if let Some(a) = own_autostart().filter(|a| own_autostart_is_ours(a)) {
-                if std::fs::remove_file(&a).is_ok() {
-                    c.info("Removed TradeSkillMaster's own \"Run at startup\" entry: it starts and closes with Hearthlink.");
-                }
+            if remove_own_autostarts() {
+                c.info("Removed TradeSkillMaster's own \"Run at startup\" entry: it starts and closes with Hearthlink.");
             }
             let want_open = self.want_open.swap(false, Ordering::SeqCst);
+            if want_open && !app_run().is_file() {
+                c.warn("TradeSkillMaster isn't installed yet.");
+            }
             if app_run().is_file() && (first || restart || want_open) {
                 if self.ours_running() {
                     if want_open {
@@ -601,17 +706,7 @@ impl Inner {
                     if core::process_running(PROCESS) {
                         // Started some other way: replace it with one tied to Hearthlink.
                         c.info("TradeSkillMaster was started without Hearthlink; restarting it so it closes with Hearthlink.");
-                        let _ = core::host_command(Path::new("pkill"), None)
-                            .args(["-TERM", "-x", PROCESS])
-                            .stdout(Stdio::null())
-                            .stderr(Stdio::null())
-                            .status();
-                        for _ in 0..50 {
-                            if !core::process_running(PROCESS) {
-                                break;
-                            }
-                            std::thread::sleep(Duration::from_millis(200));
-                        }
+                        close_all();
                     }
                     self.launch();
                 }
@@ -736,10 +831,12 @@ impl Service for Tsm {
                 i.cfg.lock().unwrap().menu_entry = menu;
                 i.save();
                 let i = i.clone();
-                std::thread::spawn(move || i.sync_menu_entry(false));
+                std::thread::spawn(move || {
+                    i.sync_menu_entry(false);
+                    i.refresh_facts();
+                });
             }
-            let entry = menu_entry_path();
-            if entry.exists() && !Inner::is_ours(&entry) {
+            if let Some(entry) = i.foreign_entry.lock().unwrap().as_ref() {
                 ui.weak(format!("There is already a TradeSkillMaster menu entry ({}), so Hearthlink doesn't add one.", entry.display()));
             }
             ui.weak(
@@ -755,7 +852,8 @@ impl Service for Tsm {
                     spawn(Box::new(|i| i.remove()));
                 }
                 if ui.button(crate::ui::ib(crate::ui::icon::FOLDER, "Open its settings folder")).clicked() {
-                    let _ = open::that(dirs::config_dir().unwrap_or_default().join("TradeSkillMaster"));
+                    // The app runs on the host, so its settings are in the host's ~/.config.
+                    let _ = open::that(core::host_config_dir().join("TradeSkillMaster"));
                 }
             });
         });
@@ -772,6 +870,21 @@ mod tests {
         let (v, p, s, size) = parse_feed(feed).unwrap();
         assert_eq!((v.as_str(), p.as_str(), s.as_str(), size), ("1.0.8", "TradeSkillMaster.AppImage", "ZzxN==", 153463323));
         assert!(parse_feed("files: []\n").is_none());
+    }
+
+    #[test]
+    fn finds_the_installed_version() {
+        let dir = std::env::temp_dir().join(format!("hearthlink-tsm-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(version_in(&dir), None);
+        // The desktop file's name may differ in case.
+        std::fs::write(dir.join("tradeskillmaster.desktop"), "[Desktop Entry]\nX-AppImage-Version=1.0.7\n").unwrap();
+        assert_eq!(version_in(&dir).as_deref(), Some("1.0.7"));
+        // Hearthlink's own note wins.
+        std::fs::write(dir.join(VERSION_FILE), "1.0.8\n").unwrap();
+        assert_eq!(version_in(&dir).as_deref(), Some("1.0.8"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Talks to tradeskillmaster.com: run with `cargo test -- --ignored`.

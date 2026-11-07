@@ -214,8 +214,8 @@ const WOW_EXES: [&str; 6] = ["wow.exe", "wowt.exe", "wowb.exe", "wowclassic.exe"
 pub fn running_games() -> Vec<RunningGame> {
     if super::install_kind() == super::Install::Flatpak {
         // The sandbox has its own /proc; ask the host.
-        let out = std::process::Command::new("flatpak-spawn")
-            .args(["--host", "pgrep", "-ifa", r"(^|[/\\])wow(classic)?[tb]?\.exe"])
+        let out = super::host_command(std::path::Path::new("pgrep"), None)
+            .args(["-ifa", r"(^|[/\\])wow(classic)?[tb]?\.exe"])
             .stderr(std::process::Stdio::null())
             .output();
         let Ok(out) = out else { return Vec::new() };

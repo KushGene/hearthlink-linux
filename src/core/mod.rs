@@ -60,9 +60,28 @@ pub fn self_exec() -> String {
 /// A command that runs on the host: in the Flatpak through `flatpak-spawn --host` (in `dir`,
 /// when given), elsewhere as it is.
 pub fn host_command(program: &std::path::Path, dir: Option<&std::path::Path>) -> std::process::Command {
+    host_app_command(program, dir, &[], false)
+}
+
+/// Like [`host_command`], with environment variables for the program itself: in the Flatpak,
+/// `Command::env` would only reach flatpak-spawn, so they are passed as `--env=`. `tied` adds
+/// `--watch-bus` there, so the host program ends when flatpak-spawn does (even on SIGKILL,
+/// which it can't forward).
+pub fn host_app_command(
+    program: &std::path::Path,
+    dir: Option<&std::path::Path>,
+    envs: &[(&str, &std::ffi::OsStr)],
+    tied: bool,
+) -> std::process::Command {
     if install_kind() == Install::Flatpak {
         let mut c = std::process::Command::new("flatpak-spawn");
         c.arg("--host");
+        if tied {
+            c.arg("--watch-bus");
+        }
+        for (k, v) in envs {
+            c.arg(format!("--env={k}={}", v.to_string_lossy()));
+        }
         if let Some(d) = dir {
             c.arg(format!("--directory={}", d.display()));
         }
@@ -73,6 +92,7 @@ pub fn host_command(program: &std::path::Path, dir: Option<&std::path::Path>) ->
         if let Some(d) = dir {
             c.current_dir(d);
         }
+        c.envs(envs.iter().map(|(k, v)| (*k, *v)));
         c
     }
 }
@@ -81,8 +101,8 @@ pub fn host_command(program: &std::path::Path, dir: Option<&std::path::Path>) ->
 /// keeps it). In the Flatpak the host is asked, since the sandbox has its own /proc.
 pub fn process_running(comm: &str) -> bool {
     if install_kind() == Install::Flatpak {
-        return std::process::Command::new("flatpak-spawn")
-            .args(["--host", "pgrep", "-x", comm])
+        return host_command(std::path::Path::new("pgrep"), None)
+            .args(["-x", comm])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
@@ -101,6 +121,15 @@ pub fn host_data_dir() -> PathBuf {
         dirs::home_dir().unwrap_or_default().join(".local/share")
     } else {
         dirs::data_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".local/share"))
+    }
+}
+
+/// The host's ~/.config (in the Flatpak, XDG_CONFIG_HOME points into the sandbox's own).
+pub fn host_config_dir() -> PathBuf {
+    if install_kind() == Install::Flatpak {
+        dirs::home_dir().unwrap_or_default().join(".config")
+    } else {
+        dirs::config_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".config"))
     }
 }
 

@@ -58,11 +58,13 @@ fn main() -> eframe::Result<()> {
         s.start();
     }
     let tsm = services.iter().find(|s| s.meta().id == services::tsm::META.id).cloned();
-    // Opens TSM when it is turned on; otherwise shows Hearthlink (where it can be turned on).
+    // Opens TSM when it is turned on and installed; otherwise shows Hearthlink (where it can be
+    // turned on, and where its install's progress or error shows).
+    let tsm_ready = |t: &Option<Arc<dyn services::Service>>| t.as_ref().is_some_and(|t| t.enabled()) && services::tsm::installed();
     let open_tsm_or_show = {
         let tsm = tsm.clone();
         move |show: &AtomicBool| match &tsm {
-            Some(t) if t.enabled() => t.upload_now(),
+            Some(t) if tsm_ready(&tsm) => t.upload_now(),
             _ => show.store(true, std::sync::atomic::Ordering::SeqCst),
         }
     };
@@ -76,9 +78,11 @@ fn main() -> eframe::Result<()> {
         let env = env.clone();
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
-                use std::io::BufRead;
+                use std::io::{BufRead, Read};
+                // A client that sends nothing mustn't hold up the next ones.
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
                 let mut line = String::new();
-                let _ = std::io::BufReader::new(stream).read_line(&mut line);
+                let _ = std::io::BufReader::new(stream.take(64)).read_line(&mut line);
                 if line.trim() == OPEN_TSM {
                     open_tsm_or_show(&show);
                 } else {
@@ -96,7 +100,7 @@ fn main() -> eframe::Result<()> {
     }
     let updates = Arc::new(update::Updates::default());
     update::start(env.clone(), updates.clone());
-    let start_hidden = minimized_arg || (open_tsm && tsm.as_ref().is_some_and(|t| t.enabled())) || env.config.read().unwrap().start_minimized;
+    let start_hidden = minimized_arg || (open_tsm && tsm_ready(&tsm)) || env.config.read().unwrap().start_minimized;
     let icon = image::load_from_memory(APP_ICON).ok().map(|i| {
         let i = i.to_rgba8();
         eframe::egui::IconData { width: i.width(), height: i.height(), rgba: i.into_raw() }
