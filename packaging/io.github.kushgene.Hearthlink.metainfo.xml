@@ -71,6 +71,12 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.3.1" date="2026-11-08">
+      <description>
+        <p>Install Hearthlink updates from the app, with package selection, SHA-256 verification and a restart action. Local installations and AppImages keep a backup; system packages and Flatpak use their installers.</p>
+        <p>Fix copying and selecting text in the Activity log. ForeverWowCraft retries transient GitHub failures, uses a release-list fallback and checks for a newer helper before updating its addons.</p>
+      </description>
+    </release>
     <release version="1.3.0" date="2026-11-07">
       <description>
         <p>New: TradeSkillMaster. Hearthlink installs, updates and runs TSM's official Linux app, checked against the SHA-512 TSM lists for it, and adds it with its icon to the app menu. The app starts and closes with Hearthlink.</p>

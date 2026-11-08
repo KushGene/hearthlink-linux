@@ -24,6 +24,7 @@ jobs:
       - name: Build
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
+          cargo test --locked
           cargo build --release --locked
           sh packaging/icons.sh
       - name: tar.gz with install.sh
@@ -78,6 +79,7 @@ jobs:
     needs: [packages, flatpak]
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: dist
@@ -87,7 +89,17 @@ jobs:
           v="${GITHUB_REF_NAME#v}"
           f="$(find dist -name '*.flatpak' | head -1)"
           [ -n "$f" ] && mv "$f" "dist/Hearthlink-$v-x86_64.flatpak" || true
+      - name: Generate API-independent update catalog
+        run: |
+          python3 -m unittest discover -s tools -p 'test_update_manifest.py'
+          python3 tools/write-update-manifest.py "${GITHUB_REF_NAME#v}" dist
       - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true
+          draft: true
+          fail_on_unmatched_files: true
+      - name: Publish only after all packages and update metadata are uploaded
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false --latest

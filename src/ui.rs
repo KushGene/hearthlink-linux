@@ -399,31 +399,7 @@ impl App {
 
     fn overview(&mut self, ui: &mut egui::Ui) {
         self.page_header(ui, "Overview", "Each service runs on its own. Turn off the ones you don't use.");
-        if let Some(r) = self.updates.newer() {
-            ui.add_space(10.0);
-            egui::Frame::new()
-                .fill(Color32::from_rgb(0x2E, 0x24, 0x0C))
-                .stroke(Stroke::new(1.0, ACCENT.gamma_multiply(0.6)))
-                .corner_radius(12.0)
-                .inner_margin(Margin::same(14))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.label(
-                        RichText::new(ib(icon::DOWNLOAD, &format!("Hearthlink {} is available (you have {})", r.version, env!("CARGO_PKG_VERSION"))))
-                            .strong()
-                            .color(ACCENT),
-                    );
-                    ui.label(crate::update::how_to_update());
-                    if !r.notes.trim().is_empty() {
-                        ui.collapsing("What's new", |ui| {
-                            ui.label(r.notes.trim());
-                        });
-                    }
-                    if primary(ui, true, icon::EXTERNAL, "Open the release page").clicked() {
-                        let _ = open::that(&r.url);
-                    }
-                });
-        }
+        self.updates_ui(ui);
         if wow_running_cached() {
             ui.add_space(6.0);
             ui.label(RichText::new(ib(icon::INFO, "WoW is running. Uploads that need the game closed wait until you quit.")).color(ACCENT));
@@ -557,11 +533,60 @@ impl App {
                         job.append(&core::fmt_time(l.at), 0.0, fmt(egui::FontId::monospace(12.5), MUTED));
                         job.append(glyph, 8.0, fmt(egui::FontId::proportional(14.0), color));
                         job.append(&l.text, 8.0, fmt(egui::FontId::proportional(14.0), text_color));
-                        ui.add(egui::Label::new(job).wrap());
+                        ui.add(egui::Label::new(job).wrap().selectable(true));
                     }
                 });
             },
         );
+    }
+
+    fn updates_ui(&self, ui: &mut egui::Ui) {
+        use crate::update::Status;
+        let status = self.updates.status.lock().unwrap().clone();
+        let busy = self.updates.is_busy();
+        let pending = matches!(status, Status::Ready(_) | Status::InstallerOpened(_));
+        section(ui, "Hearthlink updates", |ui| {
+            ui.weak(format!("Installed version: {}", env!("CARGO_PKG_VERSION")));
+            if let Some(release) = self.updates.newer() {
+                ui.label(RichText::new(format!("Hearthlink {} is available", release.version)).strong().color(ACCENT));
+                ui.label(crate::update::how_to_update());
+                if !release.notes.trim().is_empty() {
+                    ui.collapsing("What's new", |ui| { ui.label(release.notes.trim()); });
+                }
+                ui.horizontal_wrapped(|ui| {
+                    if primary(ui, !busy && !pending, icon::DOWNLOAD, "Install update").clicked() {
+                        self.updates.install_now(self.env.clone());
+                    }
+                    ui.hyperlink_to(ib(icon::EXTERNAL, "Release page"), release.url());
+                });
+            } else if *self.updates.checked_at.lock().unwrap() > 0 {
+                ui.label("No newer stable release found.");
+            }
+            match &status {
+                Status::Checking => { ui.horizontal(|ui| { ui.spinner(); ui.label("Checking for updates…"); }); }
+                Status::Working(message) => { ui.horizontal_wrapped(|ui| { ui.spinner(); ui.label(message); }); }
+                Status::Error(message) => { ui.colored_label(health_color(Health::Error), message); }
+                Status::InstallerOpened(message) => { ui.label(message); }
+                Status::Ready(restart) => {
+                    ui.colored_label(health_color(Health::Ok), "Update installed. Restart Hearthlink to use it.");
+                    if let Some(backup) = &restart.backup { ui.weak(format!("Previous executable kept at {}", backup.display())); }
+                    let uploading = self.services.iter().any(|s| s.common().is_busy());
+                    if primary(ui, !uploading, icon::SYNC, "Restart Hearthlink").on_hover_text("Waits until active service jobs finish").clicked() {
+                        match self.updates.restart() {
+                            Ok(()) => { self.quit.store(true, Ordering::SeqCst); ui.ctx().request_repaint(); }
+                            Err(e) => { *self.updates.status.lock().unwrap() = Status::Error(e.to_string()); }
+                        }
+                    }
+                }
+                Status::Idle => {}
+            }
+            if ui.add_enabled(!busy && !pending, egui::Button::new(ib(icon::SYNC, "Check for updates"))).clicked() {
+                self.updates.check_now(self.env.clone());
+            }
+            let checked = *self.updates.checked_at.lock().unwrap();
+            if checked > 0 { ui.weak(format!("Last checked {}", core::ago(checked))); }
+            ui.weak("Updates install only when you click Install update. Settings and logins are kept.");
+        });
     }
 
     /// Always visible: which Windows app version this module follows, and the newest one.
@@ -776,6 +801,7 @@ impl App {
                 .color(MUTED),
             );
         });
+        self.updates_ui(ui);
         if first {
             ui.add_space(10.0);
             if primary(ui, true, icon::CHECK, "Done, go to the overview").clicked() {

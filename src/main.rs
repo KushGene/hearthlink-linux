@@ -13,11 +13,15 @@ pub const APP_ICON: &[u8] = include_bytes!("../assets/icons/app.png");
 /// What a second start asks the running instance for (one line on the socket).
 const OPEN_TSM: &str = "open-tsm";
 
-fn single_instance(request: &str) -> Option<std::os::unix::net::UnixListener> {
-    let sock = std::env::var_os("XDG_RUNTIME_DIR")
+fn instance_socket() -> std::path::PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
-        .join("hearthlink.sock");
+        .join("hearthlink.sock")
+}
+
+fn single_instance(request: &str) -> Option<std::os::unix::net::UnixListener> {
+    let sock = instance_socket();
     if let Ok(mut s) = std::os::unix::net::UnixStream::connect(&sock) {
         use std::io::Write;
         let _ = writeln!(s, "{request}");
@@ -27,8 +31,27 @@ fn single_instance(request: &str) -> Option<std::os::unix::net::UnixListener> {
     std::os::unix::net::UnixListener::bind(&sock).ok()
 }
 
+fn wait_for_instance_exit(socket: &std::path::Path, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while let Ok(mut stream) = std::os::unix::net::UnixStream::connect(socket) {
+        use std::io::Write;
+        let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(1)));
+        let _ = stream.write_all(b"ping\n");
+        if std::time::Instant::now() >= deadline { return false; }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    true
+}
+
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    let restart_arg = args.iter().any(|a| a == "--restart-wait");
+    // The replacement starts before the old process exits. Wait instead of asking the
+    // old instance to show itself and immediately exiting (also works across Flatpak PIDs).
+    if restart_arg && !wait_for_instance_exit(&instance_socket(), std::time::Duration::from_secs(30)) {
+        eprintln!("Restart cancelled: the previous Hearthlink instance is still running.");
+        return Ok(());
+    }
     let minimized_arg = args.iter().any(|a| a == "--minimized");
     // From the TradeSkillMaster menu entry: TSM runs tied to Hearthlink.
     let open_tsm = args.iter().any(|a| a == "--open-tsm");
@@ -83,7 +106,9 @@ fn main() -> eframe::Result<()> {
                 let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
                 let mut line = String::new();
                 let _ = std::io::BufReader::new(stream.take(64)).read_line(&mut line);
-                if line.trim() == OPEN_TSM {
+                if line.trim() == "ping" {
+                    continue;
+                } else if line.trim() == OPEN_TSM {
                     open_tsm_or_show(&show);
                 } else {
                     show.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -100,7 +125,7 @@ fn main() -> eframe::Result<()> {
     }
     let updates = Arc::new(update::Updates::default());
     update::start(env.clone(), updates.clone());
-    let start_hidden = minimized_arg || (open_tsm && tsm_ready(&tsm)) || env.config.read().unwrap().start_minimized;
+    let start_hidden = !restart_arg && (minimized_arg || (open_tsm && tsm_ready(&tsm)) || env.config.read().unwrap().start_minimized);
     let icon = image::load_from_memory(APP_ICON).ok().map(|i| {
         let i = i.to_rgba8();
         eframe::egui::IconData { width: i.width(), height: i.height(), rgba: i.into_raw() }
@@ -151,5 +176,32 @@ fn install_icon() {
     }
     if std::fs::read(&path).ok().as_deref() != Some(png.as_slice()) {
         let _ = core::write_atomic(&path, &png);
+    }
+}
+
+#[cfg(test)]
+mod restart_tests {
+    use super::*;
+
+    #[test]
+    fn restart_waits_until_the_old_socket_stops_listening() {
+        let root = std::env::temp_dir().join("opencode");
+        std::fs::create_dir_all(&root).unwrap();
+        let dir = tempfile::tempdir_in(root).unwrap();
+        let socket = dir.path().join("instance.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            use std::io::BufRead;
+            let (stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap();
+            let mut message = String::new();
+            std::io::BufReader::new(stream).read_line(&mut message).unwrap();
+            assert_eq!(message, "ping\n");
+            // Drop listener: the stale socket file still exists, like after process exit.
+        });
+        assert!(wait_for_instance_exit(&socket, std::time::Duration::from_secs(2)));
+        server.join().unwrap();
+        let _listener = std::os::unix::net::UnixListener::bind(dir.path().join("busy.sock")).unwrap();
+        assert!(!wait_for_instance_exit(&dir.path().join("busy.sock"), std::time::Duration::ZERO));
     }
 }

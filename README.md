@@ -105,9 +105,35 @@ Windows helper was found in a Wine prefix.
 
 ## Update
 
-The app shows a notice when a new release is out. Install the new file the same way as the
-first one (Flatpak, rpm and deb replace the old version; for the AppImage replace the file;
-for the tar.gz run `install.sh` again).
+Hearthlink checks for stable releases every six hours. In **Overview** or **Settings →
+Hearthlink updates**, click **Check for updates**, then **Install update**. Updates are never
+installed silently. Settings, logins and service data are kept.
+
+- **AppImage / tar.gz installation:** replaces the executable at its current location with
+  an atomic rename. The folder must be writable and the file owned by your user. A copy of
+  the previous executable is kept beside it; the update panel shows its path. After a
+  successful update, click **Restart Hearthlink**. The AppImage keeps its existing filename.
+- **DEB / RPM:** detects the package owning the running executable and downloads the matching
+  release package. PackageKit installs it and may ask for authorization. If PackageKit is
+  unavailable, Hearthlink opens the verified package in your software installer; finish
+  there, then close and reopen Hearthlink. It never overwrites package-managed files directly.
+- **Flatpak:** downloads the new release bundle and installs it through Flatpak on the host,
+  keeping the current user/system installation scope. This also works for installs from
+  standalone bundles without an update repository. Custom Flatpak installations must use
+  their software manager. Authorization or missing dependencies can prevent installation;
+  the error is shown rather than reported as a successful update.
+
+Downloads require a matching SHA-256 and expected size before an installer runs. Release
+metadata comes from the `hearthlink-update.json` catalog attached by release CI, falling back
+to GitHub's API for older releases. The catalog avoids an API dependency, **not** a GitHub
+download outage. Both metadata and packages use HTTPS. The catalog is not independently
+digitally signed: trust still rests on this project's GitHub releases and HTTPS.
+
+Only Linux x86_64 packages are currently published; other architectures are explicitly
+rejected, never given a mismatched binary. Source/development builds use the local update
+path and are replaced by the released executable only when you explicitly click install.
+You can still update manually from the release page as before. The first version containing
+this updater needs to be installed once using the old method.
 
 ## Uninstall
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.3.1 (2026-11-08)
+
+### Hearthlink updates
+
+- Add **Check for updates**, **Install update** and a restart action to Overview and Settings.
+  Background checks notify only; installation always requires a click.
+- Select the matching x86_64 AppImage, tar.gz, DEB, RPM or Flatpak automatically. Verify size
+  and SHA-256 before installation. Local executables and AppImages are replaced atomically
+  with a backup; packages use the system installer and Flatpak retains its installation scope.
+- Release CI publishes an HTTPS checksum catalog alongside all five packages, allowing
+  update checks without the GitHub API. The catalog is not independently signed.
+
+### Fixes
+
+- Enable the native clipboard backend and text selection in the Activity log.
+- ForeverWowCraft: retry transient GitHub failures and fall back to the official release
+  list when the latest-release endpoint times out. Downloads still require a matching SHA-256.
+- "Install or update the addon" now checks for a newer helper first and also works before
+  the helper is installed. Report installation failures instead of treating them as success.
+
 ## 1.3.0 (2026-11-07)
 
 ### New: TradeSkillMaster

@@ -37,6 +37,7 @@ pub static META: Meta = Meta {
 };
 
 const RELEASES: &str = "https://api.github.com/repos/ForeverWowCraft/ForeverWowCraft-Helper/releases/latest";
+const RELEASES_FALLBACK: &str = "https://api.github.com/repos/ForeverWowCraft/ForeverWowCraft-Helper/releases?per_page=20";
 const HELP_URL: &str = "https://foreverwowcraft.com/helper";
 const PRIVACY_URL: &str = "https://foreverwowcraft.com/privacy.html";
 const DISCORD_URL: &str = "https://discord.gg/XPt2JUCxAg";
@@ -166,6 +167,47 @@ fn strip_stamp(line: &str) -> &str {
     }
 }
 
+/// Retry transient GitHub/proxy failures, including errors while reading a download.
+/// A release existing does not mean GitHub's API or asset CDN cannot return a 504.
+fn github_get(http: &reqwest::blocking::Client, url: &str, accept: &str, common: &Common, delay: Duration) -> anyhow::Result<Vec<u8>> {
+    for attempt in 1..=3 {
+        let result = http.get(url).header("Accept", accept).send().and_then(|r| r.error_for_status()).and_then(|r| r.bytes());
+        match result {
+            Ok(bytes) => return Ok(bytes.to_vec()),
+            Err(e) => {
+                let transient = e.is_timeout() || e.is_connect() || e.is_body() || e.status().is_some_and(|s| s.is_server_error());
+                if !transient || attempt == 3 {
+                    return Err(e.into());
+                }
+                common.warn(format!("GitHub request failed ({e}); retrying ({}/3)…", attempt + 1));
+                std::thread::sleep(delay * attempt);
+            }
+        }
+    }
+    unreachable!()
+}
+
+fn github_release(http: &reqwest::blocking::Client, latest: &str, releases: &str, common: &Common, delay: Duration) -> anyhow::Result<serde_json::Value> {
+    let accept = "application/vnd.github+json";
+    match github_get(http, latest, accept, common, delay) {
+        Ok(data) => Ok(serde_json::from_slice(&data)?),
+        Err(e) => {
+            // GitHub's latest endpoint can time out while the release list still works.
+            let transient = e.downcast_ref::<reqwest::Error>().is_some_and(|e| {
+                e.is_timeout() || e.is_connect() || e.is_body() || e.status().is_some_and(|s| s.is_server_error())
+            });
+            if !transient {
+                return Err(e);
+            }
+            common.warn("GitHub's latest-release endpoint is unavailable; trying its release list…");
+            let data = github_get(http, releases, accept, common, delay)?;
+            let releases: Vec<serde_json::Value> = serde_json::from_slice(&data)?;
+            releases.into_iter().find(|r| r["draft"] == false && r["prerelease"] == false)
+                .ok_or_else(|| anyhow::anyhow!("GitHub lists no stable release of the helper"))
+        }
+    }
+}
+
 impl ForeverWowCraft {
     pub fn new(env: Arc<Env>) -> Self {
         let first = !store::config_dir().join("foreverwowcraft.json").exists();
@@ -215,13 +257,7 @@ impl Inner {
     // ---- the official helper ------------------------------------------------------------------
     /// The newest release: (version, zip URL, sha256, notes).
     fn release(&self) -> anyhow::Result<(String, String, String, Option<String>)> {
-        let r: serde_json::Value = self
-            .http
-            .get(RELEASES)
-            .header("Accept", "application/vnd.github+json")
-            .send()?
-            .error_for_status()?
-            .json()?;
+        let r = github_release(&self.http, RELEASES, RELEASES_FALLBACK, &self.common, Duration::from_secs(2))?;
         let version = r["tag_name"].as_str().unwrap_or("").trim_start_matches('v').to_string();
         anyhow::ensure!(!version.is_empty(), "GitHub lists no release of the helper");
         let asset = r["assets"]
@@ -243,11 +279,14 @@ impl Inner {
     /// Downloads the official helper, checks it against the SHA-256 GitHub lists and puts it in
     /// place of the old one.
     fn install(&self) -> anyhow::Result<()> {
-        let c = &self.common;
         let (version, url, sha, _) = self.release()?;
+        self.install_release(&version, &url, &sha)
+    }
+
+    fn install_release(&self, version: &str, url: &str, sha: &str) -> anyhow::Result<()> {
+        let c = &self.common;
         c.info(format!("Downloading the ForeverWowCraft Helper {version} from GitHub…"));
-        let mut data = Vec::new();
-        self.http.get(&url).send()?.error_for_status()?.read_to_end(&mut data)?;
+        let data = github_get(&self.http, url, "application/octet-stream", c, Duration::from_secs(2))?;
         anyhow::ensure!(core::sha256_hex(&data) == sha, "the download was damaged (checksum didn't match)");
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data))?;
         let fresh = base_dir().join("helper.new");
@@ -469,21 +508,34 @@ impl Inner {
 
     /// Puts the two addons into the game (the helper's own `install-addon`: it leaves a newer
     /// scanner from CurseForge alone) and fetches the lists.
-    fn install_addon(&self, game: &wow::Flavor) {
+    fn install_addon(&self, game: &wow::Flavor) -> anyhow::Result<()> {
         let had = toc_version(&game.addons_dir(), SCANNER).is_some();
-        match self.run(&["install-addon"], true) {
-            Ok(_) => {
-                if !had && wow::game_running() {
-                    let t = "The addon was installed while the game ran: restart it, so that it loads the addon.";
-                    self.common.warn(t);
-                    self.env.notify("ForeverWowCraft: restart the game", t);
-                }
-            }
-            Err(e) => self.common.error(format!("addon not installed: {e}")),
+        self.run(&["install-addon"], true)?;
+        if !had && wow::game_running() {
+            let t = "The addon was installed while the game ran: restart it, so that it loads the addon.";
+            self.common.warn(t);
+            self.env.notify("ForeverWowCraft: restart the game", t);
         }
         if let Err(e) = self.run(&["lists"], false) {
             self.common.warn(format!("lists not fetched: {e}"));
         }
+        Ok(())
+    }
+
+    /// Unlike an automatic repair, an explicit update must fetch the newest bundled addon.
+    fn update_addon(&self) -> anyhow::Result<()> {
+        self.common.set_health(Health::Busy, "Checking for addon updates…");
+        find_python().map_err(anyhow::Error::msg)?;
+        let game = self.game().ok_or_else(|| anyhow::anyhow!("No WoW Forever game folder found"))?;
+        let (version, url, sha, _) = self.release()?;
+        *self.latest.lock().unwrap() = Some(version.clone());
+        if installed_version().is_none_or(|have| core::version_cmp(&version, &have).is_gt()) {
+            self.install_release(&version, &url, &sha)?;
+        }
+        self.common.set_health(Health::Busy, "Installing the addon…");
+        self.install_addon(&game)?;
+        self.common.set_health(Health::Ok, "Addon installed; restart the game or /reload");
+        Ok(())
     }
 
     fn whoami(&self) {
@@ -521,7 +573,7 @@ impl Inner {
             if installed_version().is_none() || core::now_unix() - checked > 6 * 3600 {
                 c.set_health(Health::Busy, "Checking for the newest ForeverWowCraft Helper…");
                 match self.release() {
-                    Ok((latest, ..)) => {
+                    Ok((latest, url, sha, _)) => {
                         checked = core::now_unix();
                         *self.latest.lock().unwrap() = Some(latest.clone());
                         let have = installed_version();
@@ -529,9 +581,13 @@ impl Inner {
                             if let Some(h) = &have {
                                 c.info(format!("Updating the ForeverWowCraft Helper {h} → {latest}…"));
                             }
-                            match c.exclusive(|| self.install()).unwrap_or(Ok(())) {
-                                Ok(()) => started_for = None, // the new one installs its addon and starts again
-                                Err(e) => c.error(format!("Couldn't install the ForeverWowCraft Helper: {}", core::friendly_error(&e))),
+                            match c.exclusive(|| self.install_release(&latest, &url, &sha)) {
+                                Some(Ok(())) => started_for = None, // the new one installs its addon and starts again
+                                Some(Err(e)) => {
+                                    checked = core::now_unix() - 5 * 3600; // retry in an hour, not six
+                                    c.error(format!("Couldn't install the ForeverWowCraft Helper: {}", core::friendly_error(&e)));
+                                }
+                                None => checked = 0, // another job won the lock; check next time
                             }
                         }
                     }
@@ -558,19 +614,31 @@ impl Inner {
             let key = (game.path.clone(), version.clone());
             if started_for.as_ref() != Some(&key) {
                 self.stop_watch();
-                c.exclusive(|| {
+                let installed = c.exclusive(|| {
                     c.set_health(Health::Busy, "Installing the addon…");
-                    self.install_addon(&game);
+                    self.install_addon(&game)?;
                     self.whoami();
+                    Ok::<_, anyhow::Error>(())
                 });
                 looked_addon = core::now_unix();
-                started_for = Some(key);
+                match installed {
+                    Some(Ok(())) => started_for = Some(key),
+                    Some(Err(e)) => {
+                        c.error(format!("addon not installed: {e}"));
+                        c.set_health(Health::Error, format!("Addon installation failed: {e}"));
+                        c.sleep(Duration::from_secs(60));
+                        continue;
+                    }
+                    None => {}
+                }
             } else if core::now_unix() - looked_addon > 600 {
                 // A game reinstalled or a folder emptied by hand: put the addon back.
                 looked_addon = core::now_unix();
                 if toc_version(&game.addons_dir(), SCANNER).is_none() {
                     c.info("The addon isn't in the game any more: putting it back.");
-                    c.exclusive(|| self.install_addon(&game));
+                    if let Some(Err(e)) = c.exclusive(|| self.install_addon(&game)) {
+                        c.error(format!("addon not installed: {e}"));
+                    }
                 }
             }
             if cfg.background {
@@ -756,10 +824,13 @@ impl Service for ForeverWowCraft {
                         }
                     }));
                 }
-                if ui.add_enabled(can, egui::Button::new(crate::ui::ib(crate::ui::icon::DOWNLOAD, "Install or update the addon"))).clicked() {
+                if ui.add_enabled(!busy && game.is_some() && cfg.enabled, egui::Button::new(crate::ui::ib(crate::ui::icon::DOWNLOAD, "Install or update the addon"))).clicked() {
                     spawn(Box::new(|i| {
-                        if let Some(g) = i.game() {
-                            i.install_addon(&g);
+                        i.common.info("Checking GitHub for the newest helper and addon…");
+                        if let Err(e) = i.update_addon() {
+                            let message = format!("Couldn't update the addon: {}", core::friendly_error(&e));
+                            i.common.error(&message);
+                            i.common.set_health(Health::Error, message);
                         }
                     }));
                 }
@@ -796,6 +867,86 @@ impl Drop for Inner {
 mod tests {
     use super::*;
 
+    fn github_responses(statuses: Vec<u16>) -> (String, std::thread::JoinHandle<()>) {
+        github_responses_with_bodies(statuses.into_iter().map(|s| (s, "ok")).collect())
+    }
+
+    fn github_responses_with_bodies(responses: Vec<(u16, &'static str)>) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/test", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            for (status, body) in responses {
+                let until = std::time::Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock && std::time::Instant::now() < until => {
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(e) => panic!("Missing HTTP request: {e}"),
+                    }
+                };
+                stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut request = BufReader::new(stream.try_clone().unwrap());
+                loop {
+                    let mut line = String::new();
+                    request.read_line(&mut line).unwrap();
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
+                }
+                write!(stream, "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+        });
+        (url, server)
+    }
+
+    #[test]
+    fn github_retries_gateway_timeouts() {
+        let (url, server) = github_responses(vec![504, 502, 200]);
+        let common = Common::default();
+        let http = reqwest::blocking::Client::builder().no_proxy().build().unwrap();
+        assert_eq!(github_get(&http, &url, "application/zip", &common, Duration::ZERO).unwrap(), b"ok");
+        server.join().unwrap();
+        assert_eq!(common.log.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn github_stops_after_three_failures() {
+        let (url, server) = github_responses(vec![504; 3]);
+        let http = reqwest::blocking::Client::builder().no_proxy().build().unwrap();
+        let error = github_get(&http, &url, "application/json", &Common::default(), Duration::ZERO).unwrap_err();
+        server.join().unwrap();
+        assert_eq!(error.downcast_ref::<reqwest::Error>().unwrap().status().unwrap().as_u16(), 504);
+    }
+
+    #[test]
+    fn github_does_not_retry_permanent_errors() {
+        let (url, server) = github_responses(vec![404]);
+        let common = Common::default();
+        let http = reqwest::blocking::Client::builder().no_proxy().build().unwrap();
+        let error = github_get(&http, &url, "application/json", &common, Duration::ZERO).unwrap_err();
+        server.join().unwrap();
+        assert_eq!(error.downcast_ref::<reqwest::Error>().unwrap().status().unwrap().as_u16(), 404);
+        assert!(common.log.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn github_falls_back_to_the_stable_release_list() {
+        let (url, server) = github_responses_with_bodies(vec![
+            (504, ""), (504, ""), (504, ""),
+            (200, r#"[{"tag_name":"v3","draft":true,"prerelease":false},
+                      {"tag_name":"v2","draft":false,"prerelease":true},
+                      {"tag_name":"v1","draft":false,"prerelease":false}]"#),
+        ]);
+        let http = reqwest::blocking::Client::builder().no_proxy().build().unwrap();
+        let release = github_release(&http, &url, &url, &Common::default(), Duration::ZERO).unwrap();
+        server.join().unwrap();
+        assert_eq!(release["tag_name"], "v1");
+    }
+
     #[test]
     fn strips_the_helpers_time() {
         assert_eq!(strip_stamp("2026-09-30 14:05:09  sent Stonespine (Horde): 12 items"), "sent Stonespine (Horde): 12 items");
@@ -809,7 +960,7 @@ mod tests {
     #[test]
     #[ignore]
     fn official_helper_runs() {
-        let tmp = std::env::temp_dir().join(format!("hearthlink-fwc-test-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join("opencode").join(format!("hearthlink-fwc-test-{}", std::process::id()));
         let game = tmp.join("wow/_forever_");
         std::fs::create_dir_all(game.join("WTF/Account/TEST/SavedVariables")).unwrap();
         unsafe {
@@ -842,7 +993,7 @@ mod tests {
         let addons = game.join("Interface/AddOns");
         assert!(toc_version(&addons, SCANNER).is_some());
         assert!(addons.join(PLANS_ADDON).join("Plans.lua").is_file());
-        inner.run(&["plans", "--again"], true).unwrap();
+        // Installation is local: do not contact the pipe or register a sender in this test.
         let log: Vec<String> = inner.common.log.lock().unwrap().iter().map(|l| l.text.clone()).collect();
         eprintln!("{}", log.join("\n"));
         let _ = std::fs::remove_dir_all(&tmp);
