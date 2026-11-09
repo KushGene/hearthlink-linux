@@ -72,6 +72,9 @@ fn package_format(executable: &Path) -> anyhow::Result<Format> {
     if Command::new("rpm").arg("-qf").arg(executable).output().is_ok_and(|o| o.status.success()) {
         return Ok(Format::Rpm);
     }
+    if crate::update::pacman_owned(executable) {
+        anyhow::bail!("Installed with pacman (AUR): update Hearthlink with your AUR helper, for example yay -Syu or paru -Syu");
+    }
     anyhow::bail!("Could not identify the package owning {}; update it through your system's package manager", executable.display())
 }
 

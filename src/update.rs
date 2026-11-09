@@ -226,7 +226,25 @@ fn from_github(value: serde_json::Value) -> anyhow::Result<Release> {
     Ok(release)
 }
 
+/// True when pacman owns the file (Arch Linux, the AUR package).
+pub fn pacman_owned(file: &std::path::Path) -> bool {
+    std::process::Command::new("pacman")
+        .arg("-Qqo")
+        .arg(file)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 pub fn how_to_update() -> &'static str {
+    static AUR: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let aur = *AUR.get_or_init(|| {
+        core::install_kind() == Install::Package && pacman_owned(&std::env::current_exe().unwrap_or_default())
+    });
+    if aur {
+        return "Installed from the AUR: update it with your AUR helper (yay -Syu or paru -Syu).";
+    }
     match core::install_kind() {
         Install::Flatpak => "Updates the installed Flatpak from the verified release bundle. System installations may request authorization.",
         Install::AppImage => "Replaces this AppImage at its current location and keeps a backup. Restart when ready.",
