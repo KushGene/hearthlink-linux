@@ -137,14 +137,50 @@ pub fn now_unix() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
+/// Which desktop notifications to show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Notify {
+    Off,
+    /// Problems, things to do (log in again, restart the game) and Hearthlink updates.
+    #[default]
+    Important,
+    /// Also successful uploads and syncs and new versions of the Windows apps.
+    All,
+}
+
+impl Notify {
+    pub const ALL: [Notify; 3] = [Notify::Off, Notify::Important, Notify::All];
+    pub fn label(self) -> &'static str {
+        match self {
+            Notify::Off => "Off",
+            Notify::Important => "Important only",
+            Notify::All => "All",
+        }
+    }
+    pub fn hint(self) -> &'static str {
+        match self {
+            Notify::Off => "No desktop notifications.",
+            Notify::Important => "Problems, things you need to do, and Hearthlink updates.",
+            Notify::All => "Also every finished upload and sync.",
+        }
+    }
+}
+
 /// Settings shared by every service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GlobalConfig {
     pub wow_root: Option<PathBuf>,
+    /// Old setting, only kept for configs from before 1.4: the app now starts hidden only
+    /// from the autostart entry (`--minimized`).
+    #[serde(skip_serializing)]
     pub start_minimized: bool,
     pub close_to_tray: bool,
-    pub notifications: bool,
+    /// Old on/off switch, read once to fill `notify`.
+    #[serde(skip_serializing)]
+    pub notifications: Option<bool>,
+    pub notify: Option<Notify>,
     /// Upstream versions the user has already seen a notice for, per service.
     pub dismissed_upstream: std::collections::BTreeMap<String, String>,
     pub first_run_done: bool,
@@ -158,7 +194,8 @@ impl Default for GlobalConfig {
             wow_root: None,
             start_minimized: false,
             close_to_tray: true,
-            notifications: true,
+            notifications: None,
+            notify: None,
             dismissed_upstream: Default::default(),
             first_run_done: false,
             notified_app_version: None,
@@ -181,7 +218,7 @@ pub struct LogLine {
     pub text: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Health {
     #[default]
     Idle,
@@ -291,6 +328,9 @@ pub struct Env {
 impl Env {
     pub fn load() -> Arc<Self> {
         let mut cfg: GlobalConfig = store::load("config");
+        if cfg.notify.is_none() {
+            cfg.notify = Some(if cfg.notifications == Some(false) { Notify::Off } else { Notify::Important });
+        }
         if cfg.wow_root.as_ref().is_none_or(|p| !wow::is_install_root(p)) {
             cfg.wow_root = wow::detect_installs().into_iter().next().or(cfg.wow_root);
         }
@@ -309,8 +349,23 @@ impl Env {
         self.wow_root().map(|r| wow::flavors(&r)).unwrap_or_default()
     }
 
+    pub fn notify_level(&self) -> Notify {
+        self.config.read().unwrap().notify.unwrap_or_default()
+    }
+
+    /// A problem or something the user has to do: shown unless notifications are off.
     pub fn notify(&self, title: &str, body: &str) {
-        if !self.config.read().unwrap().notifications {
+        self.send_notification(Notify::Important, title, body);
+    }
+
+    /// Good news (an upload went through): shown only with "All".
+    pub fn notify_info(&self, title: &str, body: &str) {
+        self.send_notification(Notify::All, title, body);
+    }
+
+    fn send_notification(&self, needs: Notify, title: &str, body: &str) {
+        let level = self.notify_level();
+        if level == Notify::Off || (needs == Notify::All && level != Notify::All) {
             return;
         }
         let _ = notify_rust::Notification::new()

@@ -811,6 +811,12 @@ impl Service for WowUtils {
             i.common.sleep(Duration::from_secs(20));
         });
     }
+    fn action_label(&self) -> &'static str {
+        "Sync now"
+    }
+    fn action_icon(&self) -> &'static str {
+        crate::ui::icon::SYNC
+    }
     fn upload_now(&self) {
         let i = self.inner.clone();
         std::thread::spawn(move || {
@@ -842,7 +848,7 @@ impl Service for WowUtils {
                     }
                 });
             } else if cfg.token.is_empty() {
-                ui.label("Sign in to link this computer to your WowUtils account.");
+                ui.label("Sign in to link this PC to your WowUtils account.");
                 if crate::ui::primary(ui, !busy, crate::ui::icon::SIGN_IN, "Sign in to WowUtils").clicked() {
                     let i = i.clone();
                     std::thread::spawn(move || i.sign_in());
@@ -861,10 +867,7 @@ impl Service for WowUtils {
         let flavors = i.env.flavors();
         if !flavors.is_empty() && !flavors.iter().any(|f| f.addons_dir().join(ADDON).is_dir()) {
             crate::ui::section(ui, "WowUtils addon missing", |ui| {
-                ui.label(
-                    "The WowUtils addon collects the character data and shows your raid's wishlists in game. \
-                     Install it with an addon manager (CurseForge, WowUp, Wago App) so it stays up to date.",
-                );
+                ui.label("The WowUtils addon collects your character data. Install it with an addon manager:");
                 ui.horizontal_wrapped(|ui| {
                     ui.hyperlink_to(crate::ui::ib(crate::ui::icon::EXTERNAL, "CurseForge"), "https://www.curseforge.com/wow/addons/wowutils");
                     ui.hyperlink_to(crate::ui::ib(crate::ui::icon::EXTERNAL, "Wago"), "https://addons.wago.io/addons/wowutils");
@@ -877,7 +880,7 @@ impl Service for WowUtils {
         }
 
         crate::ui::section(ui, "Raid groups", |ui| {
-            ui.weak("Wishlists and droptimizers of the ticked groups go into the game (wowutils_data addon).");
+            crate::ui::hint(ui, "Wishlists and droptimizers of the ticked groups go into the game.");
             let groups = i.st.lock().unwrap().groups.clone();
             match groups {
                 None => {
@@ -919,7 +922,7 @@ impl Service for WowUtils {
         crate::ui::section(ui, "Character data", |ui| {
             let accounts = i.st.lock().unwrap().accounts.clone();
             if accounts.is_empty() {
-                ui.label("No data from the WowUtils addon yet. Play with the addon installed and log out or /reload.");
+                ui.label("No addon data yet. Play with the addon, then log out or /reload.");
             }
             let mut c = cfg.clone();
             egui::ScrollArea::horizontal().id_salt("wu-accounts-scroll").show(ui, |ui| {
@@ -969,17 +972,10 @@ impl Service for WowUtils {
             };
             let open: Vec<&Group> = groups.iter().filter(|g| g.can_import_loot_history).collect();
             if open.is_empty() {
-                ui.label(
-                    "None of your raid groups takes loot history from this app yet. \
-                     A group admin turns it on for the group on wowutils.com.",
-                );
+                crate::ui::hint(ui, "None of your groups takes loot history yet. A group admin turns it on at wowutils.com.");
                 return;
             }
-            ui.weak(
-                "Awards from RCLootCouncil go into the ticked groups' loot history on wowutils.com, \
-                 shared with everyone in the group. Awards deleted in RCLootCouncil are passed to the \
-                 group's admins for review.",
-            );
+            crate::ui::hint(ui, "RCLootCouncil awards go to the ticked groups' loot history. Deleted awards go to the admins for review.");
             let mut c = cfg.clone();
             for g in &open {
                 let name = if g.name.is_empty() { g.id.clone() } else { g.name.clone() };

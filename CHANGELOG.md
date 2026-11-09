@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+### Tray
+
+- Each service has its own submenu (status, its action, "Show in Hearthlink") with a status dot
+  on its icon, instead of two lines per service in the main menu.
+- New: **Upload everything now**, **Notifications** (Off / Important only / All) and
+  **Start with my desktop** right in the tray menu.
+- The tray icon gets an amber or red dot when a service needs attention or has an error, and
+  shows when a Hearthlink update is available.
+- Without a tray host, closing the window minimizes it instead of hiding it for good.
+
+### Notifications
+
+- Three levels instead of on/off. *Important only* (default) leaves out finished uploads and
+  syncs and new versions of the Windows apps. Turned-off notifications stay off.
+
+### Look and texts
+
+- Calmer pages: shorter texts on every service page; versions, paths, logs and links moved
+  into a closed **Details** card; long explanations are tooltips now.
+- ForeverDB: the status says "Last upload 4 minutes ago" without the long list of counts
+  (hover the row on its page for the full line). The ForeverDB_Helper row only shows while
+  that old addon is still installed.
+- Overview: compact service cards with status dot, a summary line ("5 of 6 services on · all
+  good"), a **Turn on** button on turned-off services, and the update card only when an update
+  is there.
+- Settings: sections *Tray and startup*, *Notifications*, *Hearthlink updates* and *About*.
+  "Start hidden in the tray" is gone: Hearthlink starts hidden from the autostart entry and
+  shows its window when you open it yourself.
+- No more "newer Windows app" notices for ForeverDB, ForeverWowCraft and TradeSkillMaster,
+  which run the official apps and keep them current.
+
 ## 1.3.1 (2026-11-08)
 
 ### Hearthlink updates

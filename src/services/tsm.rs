@@ -760,8 +760,8 @@ impl Service for Tsm {
     fn action_icon(&self) -> &'static str {
         crate::ui::icon::EXTERNAL
     }
-    fn tray_label(&self) -> String {
-        "    Open TradeSkillMaster".into()
+    fn in_upload_all(&self) -> bool {
+        false
     }
 
     fn ui(&self, ui: &mut egui::Ui) {
@@ -779,12 +779,8 @@ impl Service for Tsm {
             });
         };
 
-        crate::ui::section(ui, "Official TradeSkillMaster app", |ui| {
-            ui.label(
-                "TradeSkillMaster makes its own Linux app. Hearthlink downloads it from tradeskillmaster.com, \
-                 checks it, keeps it up to date and adds it to your app menu. Sign in, choose the game folder and \
-                 pick your realms in the app itself.",
-            );
+        crate::ui::section(ui, "App", |ui| {
+            crate::ui::hint(ui, "Hearthlink installs and updates TSM's own Linux app. Sign in and pick your realms in the app.");
             ui.horizontal_wrapped(|ui| {
                 match &version {
                     Some(v) => {
@@ -795,7 +791,6 @@ impl Service for Tsm {
                             }
                         }
                         ui.weak(if running { "running" } else { "not running" });
-                        ui.weak(app_dir().display().to_string());
                     }
                     None => {
                         ui.label("Not installed yet.");
@@ -839,10 +834,7 @@ impl Service for Tsm {
             if let Some(entry) = i.foreign_entry.lock().unwrap().as_ref() {
                 ui.weak(format!("There is already a TradeSkillMaster menu entry ({}), so Hearthlink doesn't add one.", entry.display()));
             }
-            ui.weak(
-                "TradeSkillMaster runs while Hearthlink runs: it starts with Hearthlink and closes with it. \
-                 Closing its window keeps it working in its tray icon; the menu entry opens it through Hearthlink.",
-            );
+            crate::ui::hint(ui, "TSM starts and stops with Hearthlink. Closing its window keeps it running in its own tray icon.");
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(!busy && version.is_some(), egui::Button::new(crate::ui::ib(crate::ui::icon::TRASH, "Remove the app")))
@@ -851,7 +843,7 @@ impl Service for Tsm {
                 {
                     spawn(Box::new(|i| i.remove()));
                 }
-                if ui.button(crate::ui::ib(crate::ui::icon::FOLDER, "Open its settings folder")).clicked() {
+                if ui.button(crate::ui::ib(crate::ui::icon::FOLDER, "Settings folder")).clicked() {
                     // The app runs on the host, so its settings are in the host's ~/.config.
                     let _ = open::that(core::host_config_dir().join("TradeSkillMaster"));
                 }

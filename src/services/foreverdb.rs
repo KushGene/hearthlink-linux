@@ -15,7 +15,7 @@ use std::time::Duration;
 pub static META: Meta = Meta {
     id: "foreverdb",
     name: "ForeverDB",
-    tagline: "Uploads for foreverdb.net and the ForeverDB addons (WoW Forever)",
+    tagline: "Uploads for foreverdb.net and keeps its addons current (WoW Forever)",
     icon: include_bytes!("../../assets/icons/foreverdb.png"),
     website: "https://foreverdb.net/uploader",
     upstream_app: "ForeverDB Uploader",
@@ -50,6 +50,16 @@ impl Status {
     fn version(&self) -> Option<String> {
         self.get("_version").map(String::from)
     }
+    /// "4 minutes ago", without the uploader's long list of what was in it.
+    fn last_upload(&self) -> Option<String> {
+        self.get("Last upload").map(short_upload)
+    }
+}
+
+/// Drops the counts the uploader puts after the time:
+/// "4 minutes ago (270 quests, 675 drops, …)" → "4 minutes ago".
+fn short_upload(v: &str) -> String {
+    v.split_once(" (").map_or(v, |(t, _)| t).trim().to_string()
 }
 
 pub struct ForeverDb {
@@ -345,8 +355,10 @@ impl Inner {
             } else if st.get("Game folder").is_some_and(|v| v.starts_with("(none")) {
                 (Health::Attention, "No WoW Forever game folder found".to_string())
             } else {
-                let last = st.get("Last upload").unwrap_or("none yet").to_string();
-                (Health::Ok, format!("Last upload: {last}"))
+                match st.last_upload() {
+                    Some(last) if !last.starts_with("(none") && !last.starts_with("never") => (Health::Ok, format!("Last upload {last}")),
+                    _ => (Health::Ok, "Ready, nothing uploaded yet".to_string()),
+                }
             };
             if !c.is_busy() {
                 c.set_health(h, t);
@@ -393,6 +405,7 @@ impl Service for ForeverDb {
     }
 
     fn ui(&self, ui: &mut egui::Ui) {
+        use crate::ui::{ib, icon};
         let i = &self.inner;
         let st = i.status.lock().unwrap().clone();
         let cfg = i.cfg.lock().unwrap().clone();
@@ -406,85 +419,55 @@ impl Service for ForeverDb {
             });
         };
 
-        crate::ui::section(ui, "Official ForeverDB Uploader", |ui| {
-            ui.label("ForeverDB makes its own Linux uploader. Hearthlink installs it, keeps it up to date and runs it for you, so uploads are exactly what the site expects.");
-            match bin.clone() {
-                Some(b) => {
-                    ui.horizontal(|ui| {
-                        ui.label(format!("Version {}", st.version().unwrap_or_else(|| "?".into())));
-                        if let Some(l) = i.latest.lock().unwrap().clone() {
-                            if st.version().is_some_and(|v| core::version_cmp(&l, &v).is_gt()) {
-                                ui.colored_label(crate::ui::ACCENT, format!("{l} is available (updating automatically)"));
-                            }
-                        }
-                        ui.weak(b.display().to_string());
-                    });
-                }
-                None => {
-                    if ui.add_enabled(!busy, egui::Button::new(crate::ui::ib(crate::ui::icon::DOWNLOAD, "Install it"))).clicked() {
-                        spawn(Box::new(|i| {
-                            if let Err(e) = i.install() {
-                                i.common.error(format!("Couldn't install: {}", core::friendly_error(&e)));
-                            }
-                        }));
-                    }
-                }
-            }
-        });
-
         crate::ui::section(ui, "Account", |ui| {
             let account = st.get("Account").unwrap_or("–").to_string();
-            ui.label(format!("Account: {account}"));
+            let linked = !(account.starts_with("not") || account == "–");
             if let Some((code, url)) = i.link.lock().unwrap().clone() {
-                ui.horizontal(|ui| {
-                    ui.label(format!("Approve the code {code} on foreverdb.net"));
-                    if ui.button(crate::ui::ib(crate::ui::icon::EXTERNAL, "Open the page")).clicked() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(format!("Approve the code {code} on foreverdb.net."));
+                    if ui.button(ib(icon::EXTERNAL, "Open the page")).clicked() {
                         let _ = open::that(&url);
                     }
                 });
             }
             ui.horizontal(|ui| {
-                if account.starts_with("not") || account == "–" {
-                    if crate::ui::primary(ui, !busy && bin.is_some(), crate::ui::icon::LINK, "Link my ForeverDB account").clicked() {
+                if linked {
+                    let name = account.strip_prefix("linked to ").unwrap_or(&account);
+                    ui.label(format!("Linked to {name}"));
+                    if ui.add_enabled(!busy, egui::Button::new(ib(icon::UNLINK, "Unlink")).small()).clicked() {
                         spawn(Box::new(|i| {
-                            i.common.info("Linking: a page opens in your browser to approve the code.");
-                            if let Err(e) = i.run(&["link"]) {
-                                i.common.error(format!("Linking failed: {e}"));
-                            }
-                            *i.link.lock().unwrap() = None;
+                            let _ = i.run(&["unlink"]);
                             i.refresh_status();
                         }));
                     }
-                } else if ui.add_enabled(!busy, egui::Button::new(crate::ui::ib(crate::ui::icon::UNLINK, "Unlink"))).clicked() {
-                    spawn(Box::new(|i| {
-                        let _ = i.run(&["unlink"]);
-                        i.refresh_status();
-                    }));
+                } else {
+                    ui.label("Link your account so your uploads count for you.");
                 }
             });
+            if !linked && crate::ui::primary(ui, !busy && bin.is_some(), icon::LINK, "Link my ForeverDB account").clicked() {
+                spawn(Box::new(|i| {
+                    i.common.info("Linking: a page opens in your browser to approve the code.");
+                    if let Err(e) = i.run(&["link"]) {
+                        i.common.error(format!("Linking failed: {e}"));
+                    }
+                    *i.link.lock().unwrap() = None;
+                    i.refresh_status();
+                }));
+            }
         });
 
-        crate::ui::section(ui, "Game and addon", |ui| {
-            egui::ScrollArea::horizontal().id_salt("fdb-status-scroll").show(ui, |ui| {
-                egui::Grid::new("fdb-status").num_columns(2).striped(true).show(ui, |ui| {
-                    for key in ["Game folder", "Addon", "Helper addon", "Data", "Last upload"] {
-                        let value = st.get(key).unwrap_or("–");
-                        if key == "Helper addon" && value.starts_with("not") {
-                            // The old stand-alone ForeverDB_Helper; its features are in ForeverDB now.
-                            ui.weak("Helper addon").on_hover_text(
-                                "ForeverDB_Helper was a separate companion addon. Its goals, wishlist and dungeon planner \
-                                 are part of the ForeverDB addon now, so it isn't needed. If an old ForeverDB_Helper \
-                                 folder is still there, the uploader keeps it updated and carries its data over.",
-                            );
-                            ui.label("not needed (now part of the ForeverDB addon)");
-                        } else {
-                            ui.weak(key);
-                            ui.label(value);
-                        }
-                        ui.end_row();
-                    }
-                });
-            });
+        crate::ui::section(ui, "Uploads", |ui| {
+            let full_last = st.get("Last upload").unwrap_or("–").to_string();
+            let mut rows = vec![
+                ("Game folder", st.get("Game folder").unwrap_or("–").to_string(), None),
+                ("Addon", st.get("Addon").unwrap_or("–").to_string(), None),
+            ];
+            // The old ForeverDB_Helper is part of the ForeverDB addon now; only list it while one is around.
+            if let Some(h) = st.get("Helper addon").filter(|v| !v.starts_with("not")) {
+                rows.push(("Helper addon", h.to_string(), None));
+            }
+            rows.push(("Last upload", st.last_upload().unwrap_or_else(|| "–".into()), Some(full_last)));
+            crate::ui::facts(ui, "fdb-status", &rows);
             let folders = i.folders.lock().unwrap().clone();
             if folders.len() > 1 || (folders.len() == 1 && cfg.game_folder.as_deref() != Some(folders[0].path.as_path())) {
                 ui.horizontal_wrapped(|ui| {
@@ -498,11 +481,11 @@ impl Service for ForeverDb {
                 });
             }
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                if crate::ui::primary(ui, !busy && bin.is_some(), crate::ui::icon::UPLOAD, "Upload now").clicked() {
+            ui.horizontal_wrapped(|ui| {
+                if crate::ui::primary(ui, !busy && bin.is_some(), icon::UPLOAD, "Upload now").clicked() {
                     self.upload_now();
                 }
-                if ui.add_enabled(!busy && bin.is_some(), egui::Button::new(crate::ui::ib(crate::ui::icon::DOWNLOAD, "Install or update the addons"))).clicked() {
+                if ui.add_enabled(!busy && bin.is_some(), egui::Button::new(ib(icon::DOWNLOAD, "Update addons"))).clicked() {
                     spawn(Box::new(|i| {
                         if let Err(e) = i.run(&["update"]) {
                             i.common.error(format!("Update failed: {e}"));
@@ -510,29 +493,55 @@ impl Service for ForeverDb {
                         i.refresh_status();
                     }));
                 }
-                if ui.add_enabled(!busy && bin.is_some(), egui::Button::new(crate::ui::ib(crate::ui::icon::SYNC, "Refresh"))).clicked() {
-                    spawn(Box::new(|i| i.refresh_status()));
-                }
             });
-        });
-
-        crate::ui::section(ui, "Options", |ui| {
+            ui.add_space(4.0);
             let mut bg = cfg.background;
-            if ui.checkbox(&mut bg, "Upload after I play and keep the addons updated (while Hearthlink runs)").changed() {
+            if ui.checkbox(&mut bg, "Upload automatically after playing").on_hover_text("Also keeps the ForeverDB addons up to date. Runs while Hearthlink runs.").changed() {
                 i.cfg.lock().unwrap().background = bg;
                 i.save();
                 i.common.wake();
             }
             if st.get("Background").is_some_and(|v| v.starts_with("on")) {
-                ui.weak("The uploader's own background service is on, so Hearthlink leaves the background work to it.");
+                crate::ui::hint(ui, "The uploader's own background service is on, so Hearthlink leaves this to it.");
             }
-            ui.horizontal(|ui| {
-                if ui.button(crate::ui::ib(crate::ui::icon::FILE, "Open its log")).clicked() {
+        });
+
+        crate::ui::details(ui, "fdb-details", |ui| {
+            ui.horizontal_wrapped(|ui| {
+                match &bin {
+                    Some(b) => {
+                        ui.label(format!("ForeverDB Uploader {}", st.version().unwrap_or_else(|| "?".into()))).on_hover_text(b.display().to_string());
+                        if let Some(l) = i.latest.lock().unwrap().clone() {
+                            if st.version().is_some_and(|v| core::version_cmp(&l, &v).is_gt()) {
+                                ui.colored_label(crate::ui::ACCENT, format!("{l} is coming (updates itself)"));
+                            }
+                        }
+                    }
+                    None => {
+                        ui.label("The official uploader isn't installed yet.");
+                    }
+                }
+            });
+            if let Some(d) = st.get("Data") {
+                ui.weak(format!("Addon data {d}"));
+            }
+            ui.horizontal_wrapped(|ui| {
+                if bin.is_none() && ui.add_enabled(!busy, egui::Button::new(ib(icon::DOWNLOAD, "Install it"))).clicked() {
+                    spawn(Box::new(|i| {
+                        if let Err(e) = i.install() {
+                            i.common.error(format!("Couldn't install: {}", core::friendly_error(&e)));
+                        }
+                    }));
+                }
+                if ui.add_enabled(!busy && bin.is_some(), egui::Button::new(ib(icon::SYNC, "Refresh"))).clicked() {
+                    spawn(Box::new(|i| i.refresh_status()));
+                }
+                if ui.button(ib(icon::FILE, "Uploader log")).clicked() {
                     if let Some(l) = st.get("Log") {
                         let _ = open::that(l);
                     }
                 }
-                ui.hyperlink_to(crate::ui::ib(crate::ui::icon::EXTERNAL, "What it reads and sends"), "https://foreverdb.net/uploader");
+                ui.hyperlink_to(ib(icon::EXTERNAL, "What is sent"), "https://foreverdb.net/uploader");
             });
         });
     }
@@ -541,5 +550,14 @@ impl Service for ForeverDb {
 impl Drop for Inner {
     fn drop(&mut self) {
         self.stop_watch();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn last_upload_is_short() {
+        assert_eq!(super::short_upload("4 minutes ago (270 quests, 675 drops and 1,475 anonymous game facts)"), "4 minutes ago");
+        assert_eq!(super::short_upload("never"), "never");
     }
 }

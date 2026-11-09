@@ -125,7 +125,7 @@ fn main() -> eframe::Result<()> {
     }
     let updates = Arc::new(update::Updates::default());
     update::start(env.clone(), updates.clone());
-    let start_hidden = !restart_arg && (minimized_arg || (open_tsm && tsm_ready(&tsm)) || env.config.read().unwrap().start_minimized);
+    let start_hidden = !restart_arg && (minimized_arg || (open_tsm && tsm_ready(&tsm)));
     let icon = image::load_from_memory(APP_ICON).ok().map(|i| {
         let i = i.to_rgba8();
         eframe::egui::IconData { width: i.width(), height: i.height(), rgba: i.into_raw() }
@@ -140,22 +140,32 @@ fn main() -> eframe::Result<()> {
         viewport = viewport.with_icon(Arc::new(i));
     }
     let options = eframe::NativeOptions { viewport, ..Default::default() };
+    let goto: ui::Goto = Default::default();
     eframe::run_native(
         core::APP_NAME,
         options,
         Box::new(move |cc| {
-            let tray = tray::spawn(services.clone(), show.clone(), quit.clone(), Some(cc.egui_ctx.clone()));
+            let tray = tray::spawn(
+                services.clone(),
+                env.clone(),
+                updates.clone(),
+                show.clone(),
+                quit.clone(),
+                goto.clone(),
+                Some(cc.egui_ctx.clone()),
+            );
+            let has_tray = tray.is_some();
             if let Some(handle) = tray {
                 // Refresh the tray's status lines now and then.
                 std::thread::spawn(move || loop {
-                    std::thread::sleep(std::time::Duration::from_secs(15));
+                    std::thread::sleep(std::time::Duration::from_secs(10));
                     handle.update(|_| {});
                 });
             }
             if start_hidden && wayland {
                 cc.egui_ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Minimized(true));
             }
-            Ok(Box::new(ui::App::new(cc, env, services, updates, show, quit, wayland)))
+            Ok(Box::new(ui::App::new(cc, env, services, updates, show, quit, wayland, goto, has_tray)))
         }),
     )
 }

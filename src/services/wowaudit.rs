@@ -669,6 +669,12 @@ impl Service for WowAudit {
             i.common.sleep(Duration::from_secs(20));
         });
     }
+    fn action_label(&self) -> &'static str {
+        "Sync now"
+    }
+    fn action_icon(&self) -> &'static str {
+        crate::ui::icon::SYNC
+    }
     fn upload_now(&self) {
         let i = self.inner.clone();
         std::thread::spawn(move || {
@@ -681,7 +687,7 @@ impl Service for WowAudit {
         let busy = i.common.is_busy();
 
         crate::ui::section(ui, "Teams", |ui| {
-            ui.weak("A team's API key is under Team settings → API on wowaudit.com. It brings the team's wishlists into the game and takes your loot history.");
+            crate::ui::hint(ui, "Find the key on wowaudit.com under Team settings → API.");
             let mut remove = None;
             for (n, t) in cfg.teams.iter().enumerate() {
                 ui.horizontal_wrapped(|ui| {
@@ -741,7 +747,7 @@ impl Service for WowAudit {
                     }
                 });
             } else if cfg.token.is_empty() {
-                ui.label("Log in so the WowauditCompanion addon's data reaches wowaudit (no team needed).");
+                ui.label("Log in to send WowauditCompanion data (no team needed).");
                 if crate::ui::primary(ui, !busy, crate::ui::icon::SIGN_IN, "Log in to wowaudit").clicked() {
                     let i = i.clone();
                     std::thread::spawn(move || i.sign_in());
@@ -773,7 +779,7 @@ impl Service for WowAudit {
 
         crate::ui::section(ui, "Sync", |ui| {
             let mut c = cfg.clone();
-            ui.checkbox(&mut c.wishlists, "Wishlists into RCLootCouncil / SimpleLootCouncil");
+            ui.checkbox(&mut c.wishlists, "Wishlists into RCLootCouncil or SimpleLootCouncil");
             if c.wishlists {
                 ui.indent("wa-wish", |ui| {
                     if !has(RCLC_MODULE) && !SLC_ADDONS.iter().any(|a| has(a)) {

@@ -47,9 +47,9 @@ pub trait Service: Send + Sync {
     fn action_icon(&self) -> &'static str {
         crate::ui::icon::UPLOAD
     }
-    /// What `upload_now` is called in the tray menu.
-    fn tray_label(&self) -> String {
-        format!("    Upload to {} now", self.meta().name)
+    /// Part of the tray's "Upload everything now" (not for apps that only open a window).
+    fn in_upload_all(&self) -> bool {
+        true
     }
 }
 
@@ -95,12 +95,9 @@ pub fn watch_upstream(
             }
         }
         if let Some(v) = notify {
-            env.notify(
+            env.notify_info(
                 &format!("{} {} is out", meta.upstream_app, v),
-                &format!(
-                    "This Linux app is based on {}. Things that changed may not be in it yet.",
-                    meta.ported_version
-                ),
+                &format!("Hearthlink follows {}. Newer changes may be missing.", meta.ported_version),
             );
         }
         common.repaint();

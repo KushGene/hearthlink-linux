@@ -681,7 +681,10 @@ impl Service for ForeverWowCraft {
         let i = self.inner.clone();
         std::thread::spawn(move || i.worker());
     }
-    /// "Send prices now": the scan file as it is, even what was sent already (the Windows
+    fn action_label(&self) -> &'static str {
+        "Send prices"
+    }
+    /// "Send prices": the scan file as it is, even what was sent already (the Windows
     /// app's menu does the same).
     fn upload_now(&self) {
         let i = self.inner.clone();
@@ -716,87 +719,39 @@ impl Service for ForeverWowCraft {
             });
         };
 
-        crate::ui::section(ui, "Official ForeverWowCraft Helper", |ui| {
-            ui.label(
-                "The helper is open source Python and runs on Linux as it is. Hearthlink downloads the official release, \
-                 keeps it up to date and runs it for you, so what is sent is exactly what the site expects.",
-            );
-            ui.horizontal_wrapped(|ui| {
-                match &version {
-                    Some(v) => {
-                        ui.label(format!("Version {v}"));
-                        if let Some(l) = i.latest.lock().unwrap().clone() {
-                            if core::version_cmp(&l, v).is_gt() {
-                                ui.colored_label(crate::ui::ACCENT, format!("{l} is available (updating automatically)"));
-                            }
-                        }
-                        ui.weak(helper_dir().display().to_string());
-                    }
-                    None => {
-                        ui.label("Not installed yet.");
-                    }
-                }
-            });
-            match &python {
-                Some(Ok(v)) => {
-                    ui.weak(format!("Runs with Python {v}"));
-                }
-                Some(Err(e)) => {
-                    ui.colored_label(crate::ui::health_color(Health::Error), crate::ui::ib(crate::ui::icon::WARNING, e));
-                }
-                None => {}
+        use crate::ui::{ib, icon};
+        crate::ui::section(ui, "Prices and routes", |ui| {
+            if let Some(Err(e)) = &python {
+                ui.colored_label(crate::ui::health_color(Health::Error), ib(icon::WARNING, e));
             }
-            ui.horizontal(|ui| {
-                let label = if version.is_some() { "Reinstall it" } else { "Install it" };
-                if ui.add_enabled(!busy && cfg.enabled, egui::Button::new(crate::ui::ib(crate::ui::icon::DOWNLOAD, label))).clicked() {
-                    spawn(Box::new(|i| {
-                        if let Err(e) = i.install() {
-                            i.common.error(format!("Couldn't install: {}", core::friendly_error(&e)));
-                        }
-                    }));
-                }
-                ui.hyperlink_to(crate::ui::ib(crate::ui::icon::EXTERNAL, "Its code and releases"), META.upstream_url);
-            });
-        });
-
-        crate::ui::section(ui, "Sender", |ui| {
-            match &cfg.name {
-                Some(n) => {
-                    ui.label(format!("Sends as {n}{}", cfg.trust.as_ref().map(|t| format!(" ({t})")).unwrap_or_default()));
-                }
-                None => {
-                    ui.label("No name yet: the helper is given one the first time it talks to the site.");
-                }
-            }
-            ui.weak("The name is random; nothing about you or your characters is sent. A new sender is \"public\": what it sends is used where it agrees with what others saw.");
-            if let Some(from) = &cfg.took_over_from {
-                ui.weak(format!("Taken over from the Windows helper in {from}"));
-            }
-        });
-
-        crate::ui::section(ui, "Game and addon", |ui| {
             let game = i.game();
-            egui::Grid::new("fwc-status").num_columns(2).striped(true).show(ui, |ui| {
-                ui.weak("Game folder");
-                ui.label(game.as_ref().map(|g| g.path.display().to_string()).unwrap_or_else(|| "no WoW Forever folder found".into()));
-                ui.end_row();
-                let addons = game.as_ref().map(|g| g.addons_dir());
-                for (label, name) in [("Scanner addon", SCANNER), ("Plans addon", PLANS_ADDON)] {
-                    ui.weak(label);
-                    ui.label(addons.as_ref().and_then(|a| toc_version(a, name)).unwrap_or_else(|| "not installed".into()));
-                    ui.end_row();
-                }
-                ui.weak("Last sent");
-                ui.label(if cfg.last_sent > 0 {
-                    format!("{} · {}", core::ago(cfg.last_sent), cfg.last_sent_text.clone().unwrap_or_default())
-                } else {
-                    "nothing yet: open the auction house and click Save Prices".into()
-                });
-                ui.end_row();
-                ui.weak("Routes");
-                ui.label(cfg.routes.clone().unwrap_or_else(|| "–".into()));
-                ui.end_row();
-            });
+            let addons = game.as_ref().map(|g| g.addons_dir());
+            let addon = |name| addons.as_ref().and_then(|a| toc_version(a, name)).unwrap_or_else(|| "not installed".into());
+            let sender = match &cfg.name {
+                Some(n) => format!("{n}{}", cfg.trust.as_ref().map(|t| format!(" ({t})")).unwrap_or_default()),
+                None => "not registered yet".into(),
+            };
+            let mut sender_tip = "A random name: nothing about you or your characters is sent. \
+                 A new sender is \"public\": its prices count where they agree with what others saw."
+                .to_string();
+            if let Some(from) = &cfg.took_over_from {
+                sender_tip.push_str(&format!("\nTaken over from the Windows helper in {from}."));
+            }
+            crate::ui::facts(
+                ui,
+                "fwc-status",
+                &[
+                    ("Game folder", game.as_ref().map(|g| g.path.display().to_string()).unwrap_or_else(|| "no WoW Forever folder found".into()), None),
+                    ("Addons", format!("Scanner {} · Plans {}", addon(SCANNER), addon(PLANS_ADDON)), None),
+                    ("Sender", sender, Some(sender_tip)),
+                    (
+                        "Last sent",
+                        if cfg.last_sent > 0 { core::ago(cfg.last_sent) } else { "nothing yet".into() },
+                        cfg.last_sent_text.clone(),
+                    ),
+                    ("Routes", cfg.routes.clone().unwrap_or_else(|| "–".into()), None),
+                ],
+            );
             let folders = i.folders.lock().unwrap().clone();
             if folders.len() > 1 {
                 ui.horizontal_wrapped(|ui| {
@@ -814,17 +769,17 @@ impl Service for ForeverWowCraft {
             ui.add_space(4.0);
             let can = !busy && ready && game.is_some() && cfg.enabled;
             ui.horizontal_wrapped(|ui| {
-                if crate::ui::primary(ui, can, crate::ui::icon::UPLOAD, "Send prices now").clicked() {
+                if crate::ui::primary(ui, can, icon::UPLOAD, "Send prices now").clicked() {
                     self.upload_now();
                 }
-                if ui.add_enabled(can, egui::Button::new(crate::ui::ib(crate::ui::icon::SYNC, "Fetch routes now"))).clicked() {
+                if ui.add_enabled(can, egui::Button::new(ib(icon::SYNC, "Fetch routes"))).clicked() {
                     spawn(Box::new(|i| {
                         if let Err(e) = i.run(&["plans", "--again"], true) {
                             i.common.warn(format!("routes not fetched: {e}"));
                         }
                     }));
                 }
-                if ui.add_enabled(!busy && game.is_some() && cfg.enabled, egui::Button::new(crate::ui::ib(crate::ui::icon::DOWNLOAD, "Install or update the addon"))).clicked() {
+                if ui.add_enabled(!busy && game.is_some() && cfg.enabled, egui::Button::new(ib(icon::DOWNLOAD, "Update addon"))).clicked() {
                     spawn(Box::new(|i| {
                         i.common.info("Checking GitHub for the newest helper and addon…");
                         if let Err(e) = i.update_addon() {
@@ -835,23 +790,57 @@ impl Service for ForeverWowCraft {
                     }));
                 }
             });
-            ui.weak("In game: open the auction house and click Save Prices; /fwc shows your routes after /reload.");
-        });
-
-        crate::ui::section(ui, "Options", |ui| {
+            ui.add_space(4.0);
             let mut bg = cfg.background;
-            if ui.checkbox(&mut bg, "Send prices after every Save in game and keep the routes current (while Hearthlink runs)").changed() {
+            if ui
+                .checkbox(&mut bg, "Send prices automatically after each Save")
+                .on_hover_text("Also keeps your routes current. Runs while Hearthlink runs.")
+                .changed()
+            {
                 i.cfg.lock().unwrap().background = bg;
                 i.save();
                 i.common.wake();
             }
+            crate::ui::hint(ui, "In game: open the auction house and click Save Prices. /fwc shows your routes.");
+        });
+
+        crate::ui::details(ui, "fwc-details", |ui| {
             ui.horizontal_wrapped(|ui| {
-                if ui.button(crate::ui::ib(crate::ui::icon::FOLDER, "Open its state folder")).clicked() {
+                match &version {
+                    Some(v) => {
+                        ui.label(format!("ForeverWowCraft Helper {v}")).on_hover_text(helper_dir().display().to_string());
+                        if let Some(l) = i.latest.lock().unwrap().clone() {
+                            if core::version_cmp(&l, v).is_gt() {
+                                ui.colored_label(crate::ui::ACCENT, format!("{l} is coming (updates itself)"));
+                            }
+                        }
+                    }
+                    None => {
+                        ui.label("The official helper isn't installed yet.");
+                    }
+                }
+                if let Some(Ok(v)) = &python {
+                    ui.weak(format!("· Python {v}"));
+                }
+            });
+            ui.horizontal_wrapped(|ui| {
+                let label = if version.is_some() { "Reinstall" } else { "Install it" };
+                if ui.add_enabled(!busy && cfg.enabled, egui::Button::new(ib(icon::DOWNLOAD, label))).clicked() {
+                    spawn(Box::new(|i| {
+                        if let Err(e) = i.install() {
+                            i.common.error(format!("Couldn't install: {}", core::friendly_error(&e)));
+                        }
+                    }));
+                }
+                if ui.button(ib(icon::FOLDER, "State folder")).clicked() {
                     let _ = open::that(state_dir());
                 }
-                ui.hyperlink_to(crate::ui::ib(crate::ui::icon::EXTERNAL, "What is sent"), PRIVACY_URL);
-                ui.hyperlink_to(crate::ui::ib(crate::ui::icon::EXTERNAL, "Help"), HELP_URL);
-                ui.hyperlink_to(crate::ui::ib(crate::ui::icon::EXTERNAL, "Discord"), DISCORD_URL);
+            });
+            ui.horizontal_wrapped(|ui| {
+                ui.hyperlink_to(ib(icon::EXTERNAL, "What is sent"), PRIVACY_URL);
+                ui.hyperlink_to(ib(icon::EXTERNAL, "Help"), HELP_URL);
+                ui.hyperlink_to(ib(icon::EXTERNAL, "Discord"), DISCORD_URL);
+                ui.hyperlink_to(ib(icon::EXTERNAL, "Source"), META.upstream_url);
             });
         });
     }

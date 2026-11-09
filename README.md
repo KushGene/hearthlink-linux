@@ -54,8 +54,10 @@ Arch Linux: use the Flatpak, the AppImage or the tar.gz.
 1. Hearthlink looks for World of Warcraft in the usual places (`~/Games`, Lutris, Wine,
    Bottles, Steam). If it doesn't find it, pick the folder under **Settings**.
 2. Turn on the services you use and sign in where a service asks for it.
-3. Under **Settings → App** you can start Hearthlink with your desktop session; it then waits
-   in the tray and uploads after you play.
+3. Under **Settings → Tray and startup** (or right in the tray menu) you can start Hearthlink
+   with your desktop; it then waits in the tray and uploads after you play. **Settings →
+   Notifications** chooses between *Off*, *Important only* (problems, things to do, Hearthlink
+   updates) and *All* (also every finished upload).
 
 If the Windows Wowhead Client or WowUtils Bridge already ran in a Wine prefix, Hearthlink
 takes over its login, upload history and raid group choice (wishlists and loot history). The

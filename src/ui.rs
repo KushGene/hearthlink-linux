@@ -89,6 +89,66 @@ pub fn section_with(ui: &mut egui::Ui, title: &str, actions: impl FnOnce(&mut eg
     });
 }
 
+/// A short muted note under a control.
+pub fn hint(ui: &mut egui::Ui, text: &str) {
+    ui.add(egui::Label::new(RichText::new(text).small().color(MUTED)).wrap());
+}
+
+/// Name/value rows; a value with a third element shows it on hover.
+pub fn facts(ui: &mut egui::Ui, id: &str, rows: &[(&str, String, Option<String>)]) {
+    egui::Grid::new(id).num_columns(2).spacing(egui::vec2(18.0, 6.0)).show(ui, |ui| {
+        for (key, value, tip) in rows {
+            ui.label(RichText::new(*key).color(MUTED));
+            let r = ui.add(egui::Label::new(value.as_str()).truncate());
+            match tip {
+                Some(t) if t != value => r.on_hover_text(t),
+                _ => r.on_hover_text(value.as_str()),
+            };
+            ui.end_row();
+        }
+    });
+}
+
+/// Versions, paths, logs and links: a closed "Details" card, so the page stays calm.
+pub fn details(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.add_space(10.0);
+    card_frame().inner_margin(Margin::symmetric(16, 10)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        egui::CollapsingHeader::new(RichText::new("Details").strong().color(Color32::from_gray(200)))
+            .id_salt(id)
+            .default_open(false)
+            .show(ui, add);
+    });
+}
+
+/// A row of connected buttons; returns true when the selection changed.
+pub fn segmented<T: PartialEq + Copy>(ui: &mut egui::Ui, value: &mut T, options: &[(T, &str)]) -> bool {
+    let mut changed = false;
+    egui::Frame::new()
+        .fill(Color32::from_rgb(0x14, 0x15, 0x18))
+        .stroke(Stroke::new(1.0, CARD_STROKE))
+        .corner_radius(9.0)
+        .inner_margin(Margin::same(3))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                for (v, label) in options {
+                    let on = *value == *v;
+                    let text = RichText::new(*label).color(if on { ACCENT_TEXT } else { Color32::from_gray(210) });
+                    let b = egui::Button::new(if on { text.strong() } else { text })
+                        .fill(if on { ACCENT } else { Color32::TRANSPARENT })
+                        .stroke(Stroke::NONE)
+                        .corner_radius(7.0);
+                    if ui.add(b).clicked() && !on {
+                        *value = *v;
+                        changed = true;
+                    }
+                }
+            });
+        });
+    changed
+}
+
 /// A rounded status label with a coloured dot.
 fn pill(ui: &mut egui::Ui, h: Health, text: &str, busy: bool) {
     let c = health_color(h);
@@ -146,7 +206,14 @@ pub struct App {
     disk_loading: Arc<AtomicBool>,
     /// Narrow window: the sidebar shows icons only.
     compact: bool,
+    /// A page the tray asked for (a service id).
+    goto: Goto,
+    /// A tray host answered: closing can hide the window into it.
+    tray: bool,
 }
+
+/// Which service page to show next (set by the tray).
+pub type Goto = Arc<Mutex<Option<&'static str>>>;
 
 fn setup_style(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
@@ -210,6 +277,7 @@ fn setup_style(ctx: &egui::Context) {
 }
 
 impl App {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         env: Arc<Env>,
@@ -218,6 +286,8 @@ impl App {
         show_window: Arc<AtomicBool>,
         quit: Arc<AtomicBool>,
         wayland: bool,
+        goto: Goto,
+        tray: bool,
     ) -> Self {
         *env.ctx.lock().unwrap() = Some(cc.egui_ctx.clone());
         for s in &services {
@@ -249,10 +319,15 @@ impl App {
             disk: Default::default(),
             disk_loading: Default::default(),
             compact: false,
+            goto,
+            tray,
         }
     }
 
     fn upstream_newer(&self, s: &dyn Service) -> Option<String> {
+        if s.meta().runs_official {
+            return None; // the official app is kept current, nothing can drift
+        }
         let up = s.common().upstream.lock().unwrap();
         let latest = up.latest.clone()?;
         core::version_cmp(&latest, s.meta().ported_version).is_gt().then_some(latest)
@@ -398,11 +473,19 @@ impl App {
     }
 
     fn overview(&mut self, ui: &mut egui::Ui) {
-        self.page_header(ui, "Overview", "Each service runs on its own. Turn off the ones you don't use.");
-        self.updates_ui(ui);
+        let on: Vec<_> = self.services.iter().filter(|s| s.enabled()).cloned().collect();
+        let trouble = on.iter().filter(|s| matches!(s.common().health().0, Health::Error | Health::Attention)).count();
+        let subtitle = match (on.len(), trouble) {
+            (0, _) => "No service is on yet. Turn on the ones you use.".to_string(),
+            (n, 0) => format!("{n} of {} services on · all good", self.services.len()),
+            (n, 1) => format!("{n} of {} services on · 1 needs a look", self.services.len()),
+            (n, t) => format!("{n} of {} services on · {t} need a look", self.services.len()),
+        };
+        self.page_header(ui, "Overview", &subtitle);
+        self.update_banner(ui);
         if wow_running_cached() {
             ui.add_space(6.0);
-            ui.label(RichText::new(ib(icon::INFO, "WoW is running. Uploads that need the game closed wait until you quit.")).color(ACCENT));
+            hint(ui, &ib(icon::INFO, "WoW is running. Uploads that need the game closed wait until you quit."));
         }
         ui.add_space(8.0);
         let width = ui.available_width();
@@ -418,36 +501,56 @@ impl App {
                     let m = s.meta();
                     let (h, text) = s.common().health();
                     let enabled = s.enabled();
+                    let busy = s.common().is_busy();
                     // Top-down inside: the row around the cards is horizontal.
                     ui.allocate_ui_with_layout(egui::vec2(card_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                         card_frame().show(ui, |ui| {
                             ui.set_width(card_w - 34.0);
                             ui.horizontal(|ui| {
                                 if let Some(t) = self.icons.get(m.id) {
-                                    ui.add(egui::Image::new(t).fit_to_exact_size(egui::vec2(42.0, 42.0)).corner_radius(10.0));
+                                    let img = egui::Image::new(t).fit_to_exact_size(egui::vec2(36.0, 36.0)).corner_radius(9.0);
+                                    ui.add(if enabled { img } else { img.tint(Color32::from_gray(110)) });
                                 }
                                 ui.vertical(|ui| {
-                                    ui.label(RichText::new(m.name).strong().size(16.0).color(Color32::WHITE));
-                                    ui.label(RichText::new(m.tagline).color(MUTED));
+                                    ui.spacing_mut().item_spacing.y = 2.0;
+                                    let name = RichText::new(m.name).strong().size(15.5);
+                                    let r = ui.add(egui::Label::new(if enabled { name.color(Color32::WHITE) } else { name.color(MUTED) }).sense(egui::Sense::click()));
+                                    if r.hovered() {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                    }
+                                    if r.clicked() {
+                                        self.page = Page::Service(i);
+                                    }
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 6.0;
+                                        if busy && enabled {
+                                            ui.add(egui::Spinner::new().size(11.0).color(health_color(Health::Busy)));
+                                        } else {
+                                            dot(ui, health_color(if enabled { h } else { Health::Off }));
+                                        }
+                                        let status = if enabled { text.clone() } else { "Turned off".into() };
+                                        ui.add(egui::Label::new(RichText::new(&status).color(Color32::from_gray(200))).truncate()).on_hover_text(&status);
+                                    });
                                 });
                             });
-                            ui.add_space(6.0);
-                            pill(ui, if enabled { h } else { Health::Off }, &if enabled { text } else { "Turned off".into() }, s.common().is_busy());
-                            if let Some(v) = self.upstream_newer(s.as_ref()) {
-                                ui.label(
-                                    RichText::new(ib(icon::WARNING, &format!("{} {v} is out (this app: {})", m.upstream_app, m.ported_version)))
-                                        .color(ACCENT)
-                                        .small(),
-                                );
+                            if enabled && self.upstream_newer(s.as_ref()).is_some() {
+                                ui.add_space(2.0);
+                                hint(ui, &ib(icon::WARNING, &format!("A newer {} is out", m.upstream_app)));
                             }
-                            ui.add_space(4.0);
+                            ui.add_space(6.0);
                             ui.horizontal(|ui| {
-                                if ui.button(ib(icon::ARROW_RIGHT, "Open")).clicked() {
-                                    self.page = Page::Service(i);
+                                if enabled {
+                                    if ui.add_enabled(!busy, egui::Button::new(ib(s.action_icon(), s.action_label()))).clicked() {
+                                        s.upload_now();
+                                    }
+                                } else if ui.button(ib(icon::POWER, "Turn on")).clicked() {
+                                    s.set_enabled(true);
                                 }
-                                if enabled && ui.add_enabled(!s.common().is_busy(), egui::Button::new(ib(s.action_icon(), s.action_label()))).clicked() {
-                                    s.upload_now();
-                                }
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.add(egui::Button::new(RichText::new(icon::ARROW_RIGHT).size(15.0)).frame(false)).on_hover_text("Open").clicked() {
+                                        self.page = Page::Service(i);
+                                    }
+                                });
                             });
                         });
                     });
@@ -478,26 +581,25 @@ impl App {
             ui.label(RichText::new(m.tagline).color(MUTED));
             ui.hyperlink_to(ib(icon::EXTERNAL, "Website"), m.website);
         });
-        self.upstream_banner(ui, s.as_ref());
-        self.upstream_line(ui, s.as_ref());
         let (h, text) = s.common().health();
         ui.add_space(8.0);
         pill(ui, if s.enabled() { h } else { Health::Off }, &text, s.common().is_busy());
         if !s.enabled() {
             ui.add_space(10.0);
-            ui.label(RichText::new("This service is turned off. Turn it on with the switch at the top right.").color(MUTED));
+            ui.label(RichText::new("Turned off. Use the switch at the top right to turn it on.").color(MUTED));
             return;
         }
+        self.upstream_notice(ui, s.as_ref());
         s.ui(ui);
         let common = s.common().clone();
         section_with(
             ui,
             "Activity",
             |ui| {
-                if ui.small_button(ib(icon::TRASH, "Clear")).on_hover_text("Clear the list (the services keep running)").clicked() {
+                if ui.small_button(icon::TRASH).on_hover_text("Clear the list").clicked() {
                     common.log.lock().unwrap().clear();
                 }
-                if ui.small_button(ib(icon::COPY, "Copy")).on_hover_text("Copy the whole activity log").clicked() {
+                if ui.small_button(icon::COPY).on_hover_text("Copy the activity log").clicked() {
                     let text = common
                         .log
                         .lock()
@@ -516,7 +618,7 @@ impl App {
                 if log.is_empty() {
                     ui.label(RichText::new("Nothing yet.").color(MUTED));
                 }
-                egui::ScrollArea::vertical().max_height(260.0).id_salt(m.id).auto_shrink([false, true]).show(ui, |ui| {
+                egui::ScrollArea::vertical().max_height(220.0).id_salt(m.id).auto_shrink([false, true]).show(ui, |ui| {
                     use egui::text::{LayoutJob, TextFormat};
                     for l in log.iter().take(200) {
                         let (glyph, color) = match l.level {
@@ -540,16 +642,27 @@ impl App {
         );
     }
 
+    /// On the overview: only when there is something to do about Hearthlink itself.
+    fn update_banner(&self, ui: &mut egui::Ui) {
+        use crate::update::Status;
+        let status = self.updates.status.lock().unwrap().clone();
+        let newer = self.updates.newer();
+        if newer.is_none() && matches!(status, Status::Idle | Status::Checking) {
+            return;
+        }
+        self.updates_ui(ui);
+    }
+
     fn updates_ui(&self, ui: &mut egui::Ui) {
         use crate::update::Status;
         let status = self.updates.status.lock().unwrap().clone();
         let busy = self.updates.is_busy();
         let pending = matches!(status, Status::Ready(_) | Status::InstallerOpened(_));
+        let newer = self.updates.newer();
         section(ui, "Hearthlink updates", |ui| {
-            ui.weak(format!("Installed version: {}", env!("CARGO_PKG_VERSION")));
-            if let Some(release) = self.updates.newer() {
+            if let Some(release) = &newer {
                 ui.label(RichText::new(format!("Hearthlink {} is available", release.version)).strong().color(ACCENT));
-                ui.label(crate::update::how_to_update());
+                hint(ui, crate::update::how_to_update());
                 if !release.notes.trim().is_empty() {
                     ui.collapsing("What's new", |ui| { ui.label(release.notes.trim()); });
                 }
@@ -559,8 +672,6 @@ impl App {
                     }
                     ui.hyperlink_to(ib(icon::EXTERNAL, "Release page"), release.url());
                 });
-            } else if *self.updates.checked_at.lock().unwrap() > 0 {
-                ui.label("No newer stable release found.");
             }
             match &status {
                 Status::Checking => { ui.horizontal(|ui| { ui.spinner(); ui.label("Checking for updates…"); }); }
@@ -569,9 +680,9 @@ impl App {
                 Status::InstallerOpened(message) => { ui.label(message); }
                 Status::Ready(restart) => {
                     ui.colored_label(health_color(Health::Ok), "Update installed. Restart Hearthlink to use it.");
-                    if let Some(backup) = &restart.backup { ui.weak(format!("Previous executable kept at {}", backup.display())); }
+                    if let Some(backup) = &restart.backup { hint(ui, &format!("Previous version kept at {}", backup.display())); }
                     let uploading = self.services.iter().any(|s| s.common().is_busy());
-                    if primary(ui, !uploading, icon::SYNC, "Restart Hearthlink").on_hover_text("Waits until active service jobs finish").clicked() {
+                    if primary(ui, !uploading, icon::SYNC, "Restart Hearthlink").on_hover_text("Waits until running uploads finish").clicked() {
                         match self.updates.restart() {
                             Ok(()) => { self.quit.store(true, Ordering::SeqCst); ui.ctx().request_repaint(); }
                             Err(e) => { *self.updates.status.lock().unwrap() = Status::Error(e.to_string()); }
@@ -580,75 +691,66 @@ impl App {
                 }
                 Status::Idle => {}
             }
-            if ui.add_enabled(!busy && !pending, egui::Button::new(ib(icon::SYNC, "Check for updates"))).clicked() {
-                self.updates.check_now(self.env.clone());
+            if newer.is_none() {
+                ui.horizontal_wrapped(|ui| {
+                    let checked = *self.updates.checked_at.lock().unwrap();
+                    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                    if checked > 0 {
+                        ui.label(RichText::new(format!("· up to date, checked {}", core::ago(checked))).color(MUTED));
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.add_enabled(!busy && !pending, egui::Button::new(ib(icon::SYNC, "Check now"))).clicked() {
+                            self.updates.check_now(self.env.clone());
+                        }
+                    });
+                });
             }
-            let checked = *self.updates.checked_at.lock().unwrap();
-            if checked > 0 { ui.weak(format!("Last checked {}", core::ago(checked))); }
-            ui.weak("Updates install only when you click Install update. Settings and logins are kept.");
+            hint(ui, "Hearthlink checks on its own and installs only when you click. Settings and logins are kept.");
         });
     }
 
-    /// Always visible: which Windows app version this module follows, and the newest one.
-    fn upstream_line(&self, ui: &mut egui::Ui, s: &dyn Service) {
+    /// Only when the Windows app this module follows has moved on: a banner until "Got it",
+    /// then one quiet line.
+    fn upstream_notice(&mut self, ui: &mut egui::Ui, s: &dyn Service) {
         let m = s.meta();
         if m.runs_official {
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new(ib(icon::CHECK, &format!("Runs the official {}, kept up to date automatically", m.upstream_app)))
-                    .small()
-                    .color(health_color(Health::Ok)),
-            );
             return;
         }
-        let up = s.common().upstream.lock().unwrap().clone();
-        let (glyph, color, text) = match (&up.latest, &up.error) {
-            (Some(l), _) if core::version_cmp(l, m.ported_version).is_gt() => {
-                (icon::WARNING, ACCENT, format!("Based on {} {} · {l} is out", m.upstream_app, m.ported_version))
-            }
-            (Some(_), _) => (icon::CHECK, health_color(Health::Ok), format!("Matches {} {} (the newest version)", m.upstream_app, m.ported_version)),
-            (None, Some(e)) => (icon::WARNING, MUTED, format!("Based on {} {} · couldn't check for a newer one: {e}", m.upstream_app, m.ported_version)),
-            (None, None) => (icon::INFO, MUTED, format!("Based on {} {} · checking for a newer one…", m.upstream_app, m.ported_version)),
-        };
-        let checked = if up.checked_at > 0 { format!(" · checked {}", core::ago(up.checked_at)) } else { String::new() };
-        ui.add_space(4.0);
-        ui.label(RichText::new(format!("{glyph}  {text}{checked}")).small().color(color));
-    }
-
-    fn upstream_banner(&mut self, ui: &mut egui::Ui, s: &dyn Service) {
-        let m = s.meta();
         let up = s.common().upstream.lock().unwrap().clone();
         let Some(latest) = up.latest.clone() else { return };
         if !core::version_cmp(&latest, m.ported_version).is_gt() {
             return;
         }
         let dismissed = self.env.config.read().unwrap().dismissed_upstream.get(m.id).cloned();
-        ui.add_space(10.0);
+        ui.add_space(8.0);
+        if dismissed.as_deref() == Some(latest.as_str()) {
+            ui.horizontal_wrapped(|ui| {
+                hint(ui, &ib(icon::INFO, &format!("Follows {} {} · {latest} is out", m.upstream_app, m.ported_version)));
+                ui.hyperlink_to(RichText::new("What changed").small(), m.upstream_url);
+            });
+            return;
+        }
         egui::Frame::new()
-            .fill(Color32::from_rgb(0x2E, 0x24, 0x0C))
-            .stroke(Stroke::new(1.0, ACCENT.gamma_multiply(0.6)))
-            .corner_radius(12.0)
-            .inner_margin(Margin::same(14))
+            .fill(Color32::from_rgb(0x2A, 0x22, 0x0E))
+            .stroke(Stroke::new(1.0, ACCENT.gamma_multiply(0.5)))
+            .corner_radius(10.0)
+            .inner_margin(Margin::same(12))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.label(
-                    RichText::new(ib(icon::WARNING, &format!("{} {} is out. This Linux version is based on {}.", m.upstream_app, latest, m.ported_version)))
-                        .strong()
-                        .color(ACCENT),
-                );
-                ui.label("The developers changed their Windows app. New features or changed behaviour may not be in this app yet, so some data might not be sent the way the new version does.");
+                ui.label(RichText::new(ib(icon::WARNING, &format!("{} {latest} is out", m.upstream_app))).strong().color(ACCENT));
+                ui.label(format!("Hearthlink follows {}. If something changed, it may not be in here yet.", m.ported_version));
                 if let Some(n) = &up.notes {
                     ui.collapsing("What's new upstream", |ui| {
                         ui.label(n);
                     });
                 }
-                ui.horizontal(|ui| {
-                    ui.hyperlink_to(ib(icon::EXTERNAL, "See the official app"), m.upstream_url);
-                    ui.hyperlink_to(ib(icon::EXTERNAL, "Check for a newer Hearthlink"), "https://github.com/KushGene/hearthlink-linux/releases");
-                    if dismissed.as_deref() != Some(latest.as_str()) && ui.small_button(ib(icon::CHECK, "Got it")).clicked() {
+                ui.horizontal_wrapped(|ui| {
+                    if ui.small_button(ib(icon::CHECK, "Got it")).clicked() {
                         self.env.config.write().unwrap().dismissed_upstream.insert(m.id.to_string(), latest.clone());
                         self.env.save();
                     }
+                    ui.hyperlink_to(ib(icon::EXTERNAL, "Official app"), m.upstream_url);
+                    ui.hyperlink_to(ib(icon::EXTERNAL, "Hearthlink releases"), "https://github.com/KushGene/hearthlink-linux/releases");
                 });
             });
     }
@@ -766,42 +868,52 @@ impl App {
                 });
             }
         });
-        section(ui, "App", |ui| {
+        section(ui, "Tray and startup", |ui| {
             let mut cfg = self.env.config.read().unwrap().clone();
-            let before = (cfg.start_minimized, cfg.close_to_tray, cfg.notifications);
             let mut autostart = crate::autostart::enabled();
-            if ui.checkbox(&mut autostart, "Start with my desktop session (in the tray)").changed() {
+            if ui.checkbox(&mut autostart, "Start with my desktop").on_hover_text("Starts hidden in the tray when you log in.").changed() {
                 crate::autostart::set(autostart);
             }
-            ui.checkbox(&mut cfg.start_minimized, "Start hidden in the tray");
-            ui.checkbox(&mut cfg.close_to_tray, "Closing the window keeps the uploaders running in the tray");
-            if self.wayland && cfg.close_to_tray {
-                ui.label(RichText::new("On Wayland the window is minimized instead of hidden.").small().color(MUTED));
-            }
-            ui.checkbox(&mut cfg.notifications, "Show desktop notifications");
-            if (cfg.start_minimized, cfg.close_to_tray, cfg.notifications) != before {
-                *self.env.config.write().unwrap() = cfg;
+            if ui.checkbox(&mut cfg.close_to_tray, "Keep running in the tray when I close the window").changed() {
+                self.env.config.write().unwrap().close_to_tray = cfg.close_to_tray;
                 self.env.save();
             }
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                if ui.button(ib(icon::FOLDER, "Open the settings folder")).clicked() {
+            if cfg.close_to_tray && !self.tray {
+                hint(ui, "No tray found on this desktop, so closing only minimizes the window. GNOME needs the AppIndicator extension.");
+            } else if cfg.close_to_tray && self.wayland {
+                hint(ui, "On Wayland the window is minimized instead of hidden.");
+            } else if !cfg.close_to_tray {
+                hint(ui, "Closing the window quits Hearthlink and stops all uploads.");
+            }
+        });
+        section(ui, "Notifications", |ui| {
+            let mut level = self.env.notify_level();
+            let options: Vec<_> = core::Notify::ALL.iter().map(|n| (*n, n.label())).collect();
+            if segmented(ui, &mut level, &options) {
+                self.env.config.write().unwrap().notify = Some(level);
+                self.env.save();
+            }
+            hint(ui, level.hint());
+        });
+        self.updates_ui(ui);
+        section(ui, "About", |ui| {
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(ib(icon::FOLDER, "Settings folder")).clicked() {
                     let _ = open::that(crate::core::store::config_dir());
                 }
+                ui.hyperlink_to(ib(icon::EXTERNAL, "Source and help"), format!("https://github.com/{}", core::REPO));
                 if ui.button(ib(icon::POWER, "Quit Hearthlink")).clicked() {
                     self.quit.store(true, Ordering::SeqCst);
                 }
             });
-            ui.label(
-                RichText::new(format!(
-                    "Hearthlink {} · not made by or affiliated with ForeverDB, ForeverWowCraft, Wowhead, WowUtils or wowaudit.",
+            hint(
+                ui,
+                &format!(
+                    "Hearthlink {} · not made by or affiliated with ForeverDB, ForeverWowCraft, TradeSkillMaster, Wowhead, WowUtils or wowaudit.",
                     env!("CARGO_PKG_VERSION")
-                ))
-                .small()
-                .color(MUTED),
+                ),
             );
         });
-        self.updates_ui(ui);
         if first {
             ui.add_space(10.0);
             if primary(ui, true, icon::CHECK, "Done, go to the overview").clicked() {
@@ -862,6 +974,11 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             std::process::exit(0);
         }
+        if let Some(id) = self.goto.lock().unwrap().take() {
+            if let Some(i) = self.services.iter().position(|s| s.meta().id == id) {
+                self.page = Page::Service(i);
+            }
+        }
         if self.show_window.swap(false, Ordering::SeqCst) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
@@ -869,7 +986,8 @@ impl eframe::App for App {
         }
         if ctx.input(|i| i.viewport().close_requested()) && self.env.config.read().unwrap().close_to_tray {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            if self.wayland {
+            // Without a tray there'd be no way back to a hidden window.
+            if self.wayland || !self.tray {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             } else {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));

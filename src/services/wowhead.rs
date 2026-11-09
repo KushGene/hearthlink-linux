@@ -1279,7 +1279,7 @@ impl Inner {
         } else if any_sent {
             c.good("Upload complete! Thank you!");
             c.set_health(Health::Ok, format!("Uploaded {}", core::fmt_time(now_unix())));
-            self.env.notify("Wowhead", "Upload complete! Thank you!");
+            self.env.notify_info("Wowhead", "Upload complete. Thank you!");
         } else {
             c.info("No new data detected. Nothing to upload.");
             c.set_health(Health::Ok, "Nothing new to upload");
@@ -1616,10 +1616,11 @@ impl Inner {
     fn sync_notice(&self, good: bool, text: &str) {
         if good {
             self.common.good(text);
+            self.env.notify_info("Wowhead", text);
         } else {
             self.common.warn(text);
+            self.env.notify("Wowhead", text);
         }
-        self.env.notify("Wowhead", text);
     }
 
     /// Sends one sync request: metadata plus the requested Looter variables.
@@ -1810,7 +1811,7 @@ impl Service for Wowhead {
                     }
                 });
             } else if cfg.token.is_empty() {
-                ui.label("Not logged in. Uploads still work, but log in to get credit for them on Wowhead.");
+                ui.label("Uploads work without an account. Log in to get credit for them.");
                 if crate::ui::primary(ui, true, crate::ui::icon::SIGN_IN, "Log in via Wowhead.com").clicked() {
                     let i = i.clone();
                     std::thread::spawn(move || i.login());
@@ -1833,20 +1834,20 @@ impl Service for Wowhead {
         crate::ui::section(ui, "Upload", |ui| {
             let p = i.pending.lock().unwrap().clone();
             if p.games.is_empty() {
-                ui.label("No game folders found yet. Check the WoW folder in Settings.");
+                ui.label("No game folders found. Check the WoW folder in Settings.");
             }
             egui::ScrollArea::horizontal().id_salt("wh-games-scroll").show(ui, |ui| {
                 egui::Grid::new("wh-games").striped(true).num_columns(4).show(ui, |ui| {
                     ui.strong("Game");
-                    ui.strong("New cache records");
-                    ui.strong("New hotfixes");
-                    ui.strong("Looter data");
+                    ui.strong("Cache");
+                    ui.strong("Hotfixes");
+                    ui.strong("Looter");
                     ui.end_row();
                     for (game, version, wdb, hot, lua) in &p.games {
                         ui.label(format!("{game}  {version}"));
                         ui.label(wdb.to_string());
                         ui.label(hot.to_string());
-                        ui.label(if *lua > 0 { format!("{lua} account(s) to send") } else { "sent".into() });
+                        ui.label(if *lua > 0 { format!("{lua} to send") } else { "sent".into() });
                         ui.end_row();
                     }
                 });
@@ -1871,12 +1872,14 @@ impl Service for Wowhead {
 
         crate::ui::section(ui, "Options", |ui| {
             let mut c = cfg.clone();
-            ui.checkbox(&mut c.upload_on_game_exit, "Upload automatically when I close WoW");
-            ui.checkbox(&mut c.keep_looter_updated, "Keep the Wowhead Looter addon up to date (checked every 6 hours)");
-            ui.checkbox(&mut c.in_game_sync, "In-game sync for WoW Forever: send what the Looter's Sync button asks for while you play");
+            ui.checkbox(&mut c.upload_on_game_exit, "Upload when I close WoW");
+            ui.checkbox(&mut c.keep_looter_updated, "Keep the Wowhead Looter addon up to date");
+            ui.checkbox(&mut c.in_game_sync, "In-game sync (WoW Forever)")
+                .on_hover_text("Sends what the Looter's Sync button asks for while you play.");
             let mut chars = c.upload_character_data.unwrap_or(false);
             if ui
-                .checkbox(&mut chars, "Also upload my character data, so I can use it on wowhead.com")
+                .checkbox(&mut chars, "Upload my character data too")
+                .on_hover_text("Lets you use your characters on wowhead.com.")
                 .changed()
             {
                 c.upload_character_data = Some(chars);
@@ -1890,8 +1893,8 @@ impl Service for Wowhead {
                 .into_iter()
                 .collect();
             if !accounts.is_empty() {
-                ui.collapsing("Accounts without character data", |ui| {
-                    ui.weak("Game data from these accounts is still sent, their characters aren't.");
+                ui.collapsing("Skip characters of some accounts", |ui| {
+                    crate::ui::hint(ui, "Game data from ticked accounts is still sent, their characters aren't.");
                     for a in accounts {
                         let mut ex = c.excluded_accounts.contains(&a);
                         if ui.checkbox(&mut ex, &a).changed() {
@@ -1904,7 +1907,7 @@ impl Service for Wowhead {
                     }
                 });
             }
-            if ui.add_enabled(!busy, egui::Button::new(crate::ui::ib(crate::ui::icon::DOWNLOAD, "Update the Looter addon now"))).clicked() {
+            if ui.add_enabled(!busy, egui::Button::new(crate::ui::ib(crate::ui::icon::DOWNLOAD, "Update Looter now")).small()).clicked() {
                 let i = i.clone();
                 std::thread::spawn(move || match i.fetch_update() {
                     Ok(u) => i.update_looter(&u),
@@ -1913,9 +1916,8 @@ impl Service for Wowhead {
             }
             let note = i.looter_note.lock().unwrap().clone();
             if !note.is_empty() {
-                ui.weak(note);
+                crate::ui::hint(ui, &note);
             }
-            ui.weak("Not in this version yet: reading combat logs (the Windows client's optional \"use combat log\" setting).");
             if c.upload_character_data != cfg.upload_character_data
                 || c.upload_on_game_exit != cfg.upload_on_game_exit
                 || c.keep_looter_updated != cfg.keep_looter_updated
