@@ -1,0 +1,27 @@
+# Maintainer: KushGene <kushgene@posteo.de>
+pkgname=hearthlink-bin
+pkgver=1.4.0
+pkgrel=1
+pkgdesc="World of Warcraft uploaders for Linux: Wowhead, WowUtils, wowaudit, ForeverDB, ForeverWowCraft and TradeSkillMaster in one tray app"
+arch=('x86_64')
+url="https://github.com/KushGene/hearthlink-linux"
+license=('MIT')
+depends=('libgcc' 'glibc' 'hicolor-icon-theme' 'libglvnd' 'libx11' 'libxcursor' 'libxi' 'libxkbcommon-x11' 'libxrandr' 'wayland')
+optdepends=('python: ForeverWowCraft (its official helper is a Python program)'
+            'xdg-utils: opening links and folders')
+provides=('hearthlink')
+conflicts=('hearthlink')
+source=("https://github.com/KushGene/hearthlink-linux/releases/download/v${pkgver}/hearthlink-${pkgver}-${CARCH}.tar.gz")
+sha256sums=('1dd35ab1921f1889aa5fb247b9ee883f72949034fbc59c9050f3b70a72d71b72')
+
+package() {
+  cd "hearthlink-${pkgver}-${CARCH}"
+  local id=io.github.kushgene.Hearthlink
+  install -Dm755 hearthlink "$pkgdir/usr/bin/hearthlink"
+  install -Dm644 "$id.desktop" "$pkgdir/usr/share/applications/$id.desktop"
+  install -Dm644 "$id.metainfo.xml" "$pkgdir/usr/share/metainfo/$id.metainfo.xml"
+  for s in 512 256 128 64; do
+    install -Dm644 "icons/$s/$id.png" "$pkgdir/usr/share/icons/hicolor/${s}x${s}/apps/$id.png"
+  done
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
