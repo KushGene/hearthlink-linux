@@ -215,8 +215,9 @@ pub struct App {
     tray: bool,
 }
 
-/// Which service page to show next (set by the tray).
-pub type Goto = Arc<Mutex<Option<&'static str>>>;
+/// Which page to show next: a service id, "overview" or "settings" (from the tray or
+/// `hearthlink --page`).
+pub type Goto = Arc<Mutex<Option<String>>>;
 
 fn setup_style(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
@@ -978,8 +979,14 @@ impl eframe::App for App {
             std::process::exit(0);
         }
         if let Some(id) = self.goto.lock().unwrap().take() {
-            if let Some(i) = self.services.iter().position(|s| s.meta().id == id) {
-                self.page = Page::Service(i);
+            match id.as_str() {
+                "overview" => self.page = Page::Overview,
+                "settings" => self.page = Page::Settings,
+                id => {
+                    if let Some(i) = self.services.iter().position(|s| s.meta().id == id) {
+                        self.page = Page::Service(i);
+                    }
+                }
             }
         }
         if self.show_window.swap(false, Ordering::SeqCst) {

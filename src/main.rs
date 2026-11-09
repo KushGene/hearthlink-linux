@@ -59,7 +59,14 @@ fn main() -> eframe::Result<()> {
         services::wowhead::dry_run(core::Env::load());
         return Ok(());
     }
-    let Some(listener) = single_instance(if open_tsm { OPEN_TSM } else { "show" }) else {
+    // `--page foreverdb` (or overview, settings): open that page.
+    let page = args.iter().position(|a| a == "--page").and_then(|i| args.get(i + 1)).cloned();
+    let request = match (&page, open_tsm) {
+        (_, true) => OPEN_TSM.to_string(),
+        (Some(p), _) => format!("page:{p}"),
+        _ => "show".to_string(),
+    };
+    let Some(listener) = single_instance(&request) else {
         eprintln!("Hearthlink is already running; {}.", if open_tsm { "it opens TradeSkillMaster" } else { "showing its window" });
         return Ok(());
     };
@@ -93,12 +100,14 @@ fn main() -> eframe::Result<()> {
     };
     let show = Arc::new(AtomicBool::new(false));
     let quit = Arc::new(AtomicBool::new(false));
+    let goto: ui::Goto = Arc::new(std::sync::Mutex::new(page));
     if open_tsm {
         open_tsm_or_show(&show);
     }
     {
         let show = show.clone();
         let env = env.clone();
+        let goto = goto.clone();
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 use std::io::{BufRead, Read};
@@ -110,6 +119,9 @@ fn main() -> eframe::Result<()> {
                     continue;
                 } else if line.trim() == OPEN_TSM {
                     open_tsm_or_show(&show);
+                } else if let Some(p) = line.trim().strip_prefix("page:") {
+                    *goto.lock().unwrap() = Some(p.to_string());
+                    show.store(true, std::sync::atomic::Ordering::SeqCst);
                 } else {
                     show.store(true, std::sync::atomic::Ordering::SeqCst);
                 }
@@ -140,7 +152,6 @@ fn main() -> eframe::Result<()> {
         viewport = viewport.with_icon(Arc::new(i));
     }
     let options = eframe::NativeOptions { viewport, ..Default::default() };
-    let goto: ui::Goto = Default::default();
     eframe::run_native(
         core::APP_NAME,
         options,

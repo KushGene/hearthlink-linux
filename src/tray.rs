@@ -26,7 +26,7 @@ struct Tray {
 impl Tray {
     fn open(&self, page: Option<&'static str>) {
         if let Some(p) = page {
-            *self.goto.lock().unwrap() = Some(p);
+            *self.goto.lock().unwrap() = Some(p.to_string());
         }
         self.show.store(true, Ordering::SeqCst);
         if let Some(c) = &self.ctx {

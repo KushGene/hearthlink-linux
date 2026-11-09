@@ -19,6 +19,11 @@
 
 ### Look and texts
 
+- ForeverWowCraft: the routes show one realm per line and can be read in full.
+- `hearthlink --page <service|overview|settings>` opens that page, also in a running Hearthlink.
+- "1 day ago" instead of "1 days ago".
+- New README with current screenshots.
+
 - Calmer pages: shorter texts on every service page; versions, paths, logs and links moved
   into a closed **Details** card; long explanations are tooltips now.
 - ForeverDB: the status says "Last upload 4 minutes ago" without the long list of counts

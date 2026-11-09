@@ -1,175 +1,170 @@
-<p align="center"><img src="assets/icons/app.png" width="128" alt=""></p>
+<p align="center"><img src="assets/icons/app.png" width="112" alt=""></p>
 
-# Hearthlink: WoW data uploader for Linux
-
-**Looking for the Wowhead Client, the WowUtils Bridge, the wowaudit client, the ForeverDB
-Uploader, the ForeverWowCraft Helper or the TradeSkillMaster app on Linux?** Hearthlink does their job in one app with a tray icon, on any Linux
-distribution, with the game running through Lutris, Wine, Bottles or Steam/Proton.
-
-| Service | What Hearthlink does | Windows app it replaces |
-|---|---|---|
-| **Wowhead** | Uploads the game caches and Wowhead Looter data; keeps the Looter addon up to date; sends the Looter's in-game sync (WoW Forever) | Wowhead Client |
-| **WowUtils** | Sends your character data; writes your raid groups' wishlists and droptimizers into the game; sends RCLootCouncil's loot history to groups that take it | WowUtils Bridge |
-| **ForeverDB** | Installs, updates and runs ForeverDB's official Linux uploader (WoW Forever) | ForeverDB Uploader |
-| **ForeverWowCraft** | Installs, updates and runs the official ForeverWowCraft Helper (WoW Forever): sends the auction prices the addon saves, writes your profession routes into the game, keeps the addon installed | ForeverWowCraft Helper |
-| **wowaudit** | Writes your team's wishlists into RCLootCouncil (wowaudit module) / SimpleLootCouncil; sends RCLootCouncil loot history and WowauditCompanion data | wowaudit desktop client |
-| **TradeSkillMaster** | Installs, updates and starts TSM's official Linux app, with an app menu entry and its icon | TradeSkillMaster app |
-
-> **About wowaudit:** I don't use wowaudit myself, so this part is untested on my side: it was
-> built from how the wowaudit desktop client works and checked against wowaudit's API where
-> that was possible without a team, and I hope it works. If you use wowaudit, I'd be glad to
-> hear whether it does (see [Bugs and wishes](#bugs-and-wishes)).
-
-When one of the Windows apps gets a newer version than the one Hearthlink was built from,
-the app tells you, since that version may send things Hearthlink doesn't know about yet.
-Hearthlink also tells you when a new Hearthlink release is out.
-
-## Screenshots
+<h1 align="center">Hearthlink</h1>
 
 <p align="center">
-  <img src="assets/screenshots/overview.png" width="49%" alt="Overview: status of all four services">
-  <img src="assets/screenshots/wowhead.png" width="49%" alt="Wowhead page: upload status per game version and options">
+  <b>All your World of Warcraft uploaders in one Linux app.</b><br>
+  For WoW running through Lutris, Wine, Bottles or Steam/Proton.
+</p>
+
+<p align="center">
+  <a href="https://github.com/KushGene/hearthlink-linux/releases/latest"><b>Download</b></a> ·
+  <a href="#install">Install</a> ·
+  <a href="#questions">Questions</a> ·
+  <a href="https://github.com/KushGene/hearthlink-linux/issues/new">Report a problem</a>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/overview.png" width="85%" alt="Hearthlink overview with the status of every service">
+</p>
+
+The Wowhead Client, WowUtils Bridge, wowaudit client and the other uploaders only exist for
+Windows. Hearthlink does their job on Linux: it sits in your tray, uploads after you play and
+keeps the addons up to date.
+
+## What it does
+
+| Service | What Hearthlink does for you |
+|---|---|
+| **Wowhead** | Uploads game data and the Wowhead Looter addon's data, keeps the Looter up to date |
+| **WowUtils** | Sends your character data, brings your raid's wishlists into the game, sends RCLootCouncil loot history |
+| **wowaudit** | Brings your team's wishlists into RCLootCouncil / SimpleLootCouncil, sends loot history and WowauditCompanion data |
+| **ForeverDB** | Runs ForeverDB's official uploader for WoW Forever and keeps it up to date |
+| **ForeverWowCraft** | Runs the official ForeverWowCraft Helper: sends auction prices, brings your profession routes into the game |
+| **TradeSkillMaster** | Installs, updates and starts TSM's official Linux app |
+
+Turn on only the services you use. Already used the Windows Wowhead Client, WowUtils Bridge or
+ForeverWowCraft Helper in Wine? Hearthlink picks up its login and settings.
+
+<p align="center">
+  <img src="assets/screenshots/wowhead.png" width="49%" alt="Wowhead page: what is ready to upload, and options">
+  <img src="assets/screenshots/foreverwowcraft.png" width="49%" alt="ForeverWowCraft page: prices and profession routes">
 </p>
 
 ## Install
 
 Download the file for your system from the
-[latest release](https://github.com/KushGene/hearthlink-linux/releases/latest).
+[latest release](https://github.com/KushGene/hearthlink-linux/releases/latest) and open it.
 
-| System | File | How |
-|---|---|---|
-| **Any distribution** (recommended) | `Hearthlink-<version>-x86_64.flatpak` | Open it in Discover / GNOME Software, or run `flatpak install --user Hearthlink-<version>-x86_64.flatpak` |
-| **Fedora, openSUSE, Nobara, …** | `Hearthlink.x86_64.rpm` | Open it in Discover / GNOME Software, or run `sudo dnf install ./Hearthlink.x86_64.rpm` |
-| **Debian, Ubuntu, Mint, Pop!_OS, …** | `Hearthlink.amd64.deb` | Open it in your software center, or run `sudo apt install ./Hearthlink.amd64.deb` |
-| **Any distribution, no install** | `Hearthlink-<version>-x86_64.AppImage` | `chmod +x Hearthlink-*.AppImage` then double-click it |
-| **Any distribution, no root** | `hearthlink-<version>-x86_64.tar.gz` | Unpack it and run `./install.sh` (installs to `~/.local`) |
+| Your system | File |
+|---|---|
+| **Any distribution** (recommended) | `Hearthlink-…-x86_64.flatpak` |
+| Fedora, openSUSE, Nobara, … | `Hearthlink.x86_64.rpm` |
+| Debian, Ubuntu, Mint, Pop!_OS, … | `Hearthlink.amd64.deb` |
+| Any distribution, without installing | `Hearthlink-…-x86_64.AppImage` |
 
-Flatpak needs the Flathub runtime once:
-`flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo`
+<details>
+<summary>Install from the terminal, Arch Linux and other options</summary>
+
+```sh
+# Flatpak (needs Flathub once)
+flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user Hearthlink-*-x86_64.flatpak
+
+# Fedora / openSUSE
+sudo dnf install ./Hearthlink.x86_64.rpm
+
+# Debian / Ubuntu
+sudo apt install ./Hearthlink.amd64.deb
+
+# AppImage
+chmod +x Hearthlink-*.AppImage && ./Hearthlink-*.AppImage
+
+# tar.gz, without root (installs to ~/.local)
+tar xf hearthlink-*-x86_64.tar.gz && cd hearthlink-*-x86_64 && ./install.sh
+```
 
 Arch Linux: use the Flatpak, the AppImage or the tar.gz.
+</details>
 
-## First start
+## Getting started
 
-1. Hearthlink looks for World of Warcraft in the usual places (`~/Games`, Lutris, Wine,
-   Bottles, Steam). If it doesn't find it, pick the folder under **Settings**.
-2. Turn on the services you use and sign in where a service asks for it.
-3. Under **Settings → Tray and startup** (or right in the tray menu) you can start Hearthlink
-   with your desktop; it then waits in the tray and uploads after you play. **Settings →
-   Notifications** chooses between *Off*, *Important only* (problems, things to do, Hearthlink
-   updates) and *All* (also every finished upload).
+1. **Open Hearthlink.** It finds World of Warcraft by itself in the usual places. If not, pick
+   the folder under **Settings**.
+2. **Turn on your services** and log in where a service asks for it.
+3. **Done.** Hearthlink can start with your desktop and waits in the tray. Right-click the
+   tray icon to upload right away, change notifications or open a service.
 
-If the Windows Wowhead Client or WowUtils Bridge already ran in a Wine prefix, Hearthlink
-takes over its login, upload history and raid group choice (wishlists and loot history). The
-same goes for the ForeverWowCraft Helper: Hearthlink takes over its sender name, what it sent
-and the routes, so it carries on under the same name.
+<p align="center">
+  <img src="assets/screenshots/settings.png" width="70%" alt="Settings: game folder, services, tray and startup">
+</p>
 
-## Addons
+## Updates
 
-- **Wowhead Looter**: installed and kept up to date by Hearthlink (checked every 6 hours,
-  never while the game runs).
-- **ForeverDB addons**: installed and kept up to date by ForeverDB's uploader.
-- **ForeverWowCraft Scanner and Plans**: installed and kept up to date by the ForeverWowCraft
-  Helper (a scanner that CurseForge updated to a newer version is left alone).
-- **wowutils_data**: written by Hearthlink (your raid groups' data).
-- **WowUtils**: install it with an addon manager (CurseForge, WowUp, Wago App); Hearthlink
-  shows a hint when it's missing.
-- **RCLootCouncil** (optional): its loot history goes to the raid groups you tick under
-  WowUtils → Loot history, if a group admin allowed importing for the group.
+Hearthlink checks for new versions by itself and tells you when one is out. Click
+**Install update**; your settings and logins are kept. Nothing is installed without your click.
 
-## TradeSkillMaster
+## Questions
 
-TradeSkillMaster makes its own Linux app (an AppImage). Turn the service on and Hearthlink
-downloads it from TSM's update server (the one the app's own updater uses), checks it against
-the SHA-512 listed there, unpacks it to `~/.local/share/hearthlink/tsm` and adds
-**TradeSkillMaster** with its icon to your app menu. If a matching
-`TradeSkillMaster*.AppImage` is already in Downloads or `~/Applications`, that one is used
-instead of downloading it again. Unpacked, it runs without FUSE/libfuse2 and also from the
-Flatpak. The app is tied to Hearthlink: while the service is on, it starts with Hearthlink and closes
-with it (also if Hearthlink crashes). Its own "Run at startup" entry is removed, since
-Hearthlink starts it; the menu entry opens it through Hearthlink. Closing its window keeps it
-working in its tray icon. Hearthlink checks for a new version every 6 hours and restarts the
-app to put it in place. Sign in, choose the game folder and pick realms in the app itself; its
-settings stay in `~/.config/TradeSkillMaster`. The service is off until you turn it on (the app
-is about 150 MB).
+<details>
+<summary><b>Which addons do I need?</b></summary>
 
-## ForeverWowCraft and Python
+Hearthlink installs and updates most of them for you: the Wowhead Looter, the ForeverDB addons
+and the ForeverWowCraft addons. Install the **WowUtils** addon (and RCLootCouncil, if you use it)
+with an addon manager like CurseForge, WowUp or the Wago App. Hearthlink shows a hint when one is
+missing.
+</details>
 
-The [ForeverWowCraft Helper](https://github.com/ForeverWowCraft/ForeverWowCraft-Helper) is open
-source Python (MIT) and runs on Linux as it is. Hearthlink downloads the official release from
-GitHub, checks it against the SHA-256 GitHub lists for it, updates it when a new one is out
-(checked every 6 hours) and runs it with your system's Python 3.10 or newer. Only its Windows
-parts (tray icon, autostart, folder picker) are Hearthlink's. The Flatpak brings Python along;
-the rpm and deb depend on `python3`; for the AppImage and the tar.gz, `python3` has to be
-installed (it is on almost every distribution). Its state is in
-`~/.local/share/hearthlink/foreverwowcraft`. The service is off until you turn it on, unless a
-Windows helper was found in a Wine prefix.
+<details>
+<summary><b>Do I need Python?</b></summary>
 
-## Update
+Only for ForeverWowCraft, whose official helper is a Python program. The Flatpak brings Python
+along; the rpm and deb install it for you. Almost every distribution has it already.
+</details>
 
-Hearthlink checks for stable releases every six hours. In **Overview** or **Settings →
-Hearthlink updates**, click **Check for updates**, then **Install update**. Updates are never
-installed silently. Settings, logins and service data are kept.
+<details>
+<summary><b>The tray icon doesn't show up</b></summary>
 
-- **AppImage / tar.gz installation:** replaces the executable at its current location with
-  an atomic rename. The folder must be writable and the file owned by your user. A copy of
-  the previous executable is kept beside it; the update panel shows its path. After a
-  successful update, click **Restart Hearthlink**. The AppImage keeps its existing filename.
-- **DEB / RPM:** detects the package owning the running executable and downloads the matching
-  release package. PackageKit installs it and may ask for authorization. If PackageKit is
-  unavailable, Hearthlink opens the verified package in your software installer; finish
-  there, then close and reopen Hearthlink. It never overwrites package-managed files directly.
-- **Flatpak:** downloads the new release bundle and installs it through Flatpak on the host,
-  keeping the current user/system installation scope. This also works for installs from
-  standalone bundles without an update repository. Custom Flatpak installations must use
-  their software manager. Authorization or missing dependencies can prevent installation;
-  the error is shown rather than reported as a successful update.
+GNOME needs the
+[AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/).
+Without a tray, closing the window only minimizes Hearthlink, so it keeps working.
+</details>
 
-Downloads require a matching SHA-256 and expected size before an installer runs. Release
-metadata comes from the `hearthlink-update.json` catalog attached by release CI, falling back
-to GitHub's API for older releases. The catalog avoids an API dependency, **not** a GitHub
-download outage. Both metadata and packages use HTTPS. The catalog is not independently
-digitally signed: trust still rests on this project's GitHub releases and HTTPS.
+<details>
+<summary><b>Is this safe? What is sent?</b></summary>
 
-Only Linux x86_64 packages are currently published; other architectures are explicitly
-rejected, never given a mismatched binary. Source/development builds use the local update
-path and are replaced by the released executable only when you explicitly click install.
-You can still update manually from the release page as before. The first version containing
-this updater needs to be installed once using the old method.
+Hearthlink sends the same data the official Windows apps send, to the same sites. For
+ForeverDB, ForeverWowCraft and TradeSkillMaster it runs the official apps themselves, downloaded
+from their makers and checked against their checksums.
+</details>
 
-## Uninstall
+<details>
+<summary><b>wowaudit</b></summary>
+
+I don't use wowaudit myself, so this part was built from how the wowaudit client works but
+isn't tested by me. If you use it, please tell me whether it works.
+</details>
+
+<details>
+<summary><b>Uninstall</b></summary>
 
 Flatpak: `flatpak uninstall io.github.kushgene.Hearthlink` · rpm: `sudo dnf remove hearthlink` ·
 deb: `sudo apt remove hearthlink` · tar.gz: `./uninstall.sh` · AppImage: delete the file.
-Settings and logins are in `~/.config/hearthlink` and `~/.local/share/hearthlink` (Flatpak:
-`~/.var/app/io.github.kushgene.Hearthlink`).
+Settings and logins are in `~/.config/hearthlink` and `~/.local/share/hearthlink`
+(Flatpak: `~/.var/app/io.github.kushgene.Hearthlink`).
+</details>
 
-## Build from source
+<details>
+<summary><b>Build from source</b></summary>
 
 ```sh
-cargo build --release          # current stable Rust; needs no system libraries besides glibc
+cargo build --release
 ./target/release/hearthlink
 ```
 
-Packages: `packaging/icons.sh`, then `cargo deb --no-build`, `cargo generate-rpm`,
-`packaging/build-appimage.sh`; Flatpak via `packaging/io.github.kushgene.Hearthlink.yml`.
-`.github/workflows/release.yml` builds all of them when a `v*` tag is pushed.
+Packages are built by `.github/workflows/release.yml` when a `v*` tag is pushed.
+</details>
 
-## Bugs and wishes
+## Problems and wishes
 
-Found a bug, or something doesn't work the way the Windows app does? Is there a service or
-uploader you'd like Hearthlink to support? Please
-[open an issue](https://github.com/KushGene/hearthlink-linux/issues/new). For bugs, the app's
-log (the service's page in Hearthlink) and your distribution help a lot.
+Something doesn't work, or you'd like another uploader in Hearthlink?
+[Open an issue](https://github.com/KushGene/hearthlink-linux/issues/new). The **Activity** list
+on the service's page (copy button at its top right) and your distribution help a lot.
 
-## Disclaimer
+---
 
-Hearthlink is a community project. It is not made by, endorsed by or affiliated with
-Blizzard Entertainment, Wowhead, WowUtils, wowaudit, ForeverDB, ForeverWowCraft or TradeSkillMaster. World of
-Warcraft is a trademark of Blizzard Entertainment. Icons: [Phosphor](https://phosphoricons.com)
-(MIT). The ForeverWowCraft logo belongs to ForeverWowCraft and is used to show which service a
-page is about; the same goes for the TradeSkillMaster logo. The TradeSkillMaster app is not part of
-Hearthlink: Hearthlink downloads the official one. The ForeverWowCraft Helper and its addons (MIT, (c) 2026 ForeverWowCraft) are not
-part of Hearthlink: Hearthlink downloads the official release.
-
-License: MIT
+<sub>Hearthlink is a community project, not made by or affiliated with Blizzard Entertainment,
+Wowhead, WowUtils, wowaudit, ForeverDB, ForeverWowCraft or TradeSkillMaster. World of Warcraft is
+a trademark of Blizzard Entertainment. Service logos belong to their owners and only show which
+service a page is about. The official apps Hearthlink runs are downloaded from their makers and
+are not part of Hearthlink. Icons: [Phosphor](https://phosphoricons.com) (MIT). License: MIT.</sub>

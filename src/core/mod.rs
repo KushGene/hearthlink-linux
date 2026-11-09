@@ -438,6 +438,7 @@ pub fn ago(t: i64) -> String {
         d if d < 60 => "just now".into(),
         d if d < 3600 => format!("{} min ago", d / 60),
         d if d < 86400 => format!("{} h ago", d / 3600),
+        d if d < 2 * 86400 => "1 day ago".into(),
         d => format!("{} days ago", d / 86400),
     }
 }
