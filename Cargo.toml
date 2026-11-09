@@ -27,6 +27,7 @@ dirs = "7"
 open = "5"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 notify-rust = "4"
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 zip = { version = "9", default-features = false, features = ["deflate"] }
 rand = "0.9"
 anyhow = "1"

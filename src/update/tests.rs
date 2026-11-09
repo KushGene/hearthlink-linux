@@ -219,3 +219,17 @@ fn appimage_replacement_checks_the_payload_and_keeps_a_backup() {
     assert!(install::replace(&target, &package, Format::AppImage).is_err());
     assert_eq!(std::fs::read(&target).unwrap(), image);
 }
+
+#[test]
+#[ignore = "needs a running PackageKit daemon"]
+fn packagekit_transaction_reports_finished() {
+    let (connection, path) = super::packagekit::transaction().expect("PackageKit available");
+    super::packagekit::run(&connection, path, "Resolve", &(0u64, vec!["bash"])).unwrap();
+}
+
+#[test]
+#[ignore = "installs HEARTHLINK_PK_FILE system-wide; shows a polkit dialog"]
+fn packagekit_installs_local_file() {
+    let file = std::env::var("HEARTHLINK_PK_FILE").expect("HEARTHLINK_PK_FILE");
+    assert!(super::packagekit::install_file(std::path::Path::new(&file)).unwrap());
+}

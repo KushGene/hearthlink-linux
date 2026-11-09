@@ -119,9 +119,7 @@ pub(super) fn install(release: &Release, progress: impl Fn(String)) -> anyhow::R
         }
         Format::Deb | Format::Rpm => {
             progress("Installing through your package manager; an authorization dialog may appear…".into());
-            let available = Command::new("pkcon").arg("--version").output().is_ok_and(|o| o.status.success());
-            if available {
-                run_installer(Command::new("pkcon").args(["--noninteractive", "install-local"]).arg(&package))?;
+            if super::packagekit::install_file(&package)? {
                 Ok(Status::Ready(Restart { executable: Some(executable), backup: None }))
             } else {
                 // Opening the package isn't proof it was installed. Do not show "installed".

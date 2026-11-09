@@ -1,5 +1,6 @@
 //! User-confirmed, install-aware updates. No installer runs during background checks.
 mod install;
+mod packagekit;
 #[cfg(test)]
 mod tests;
 

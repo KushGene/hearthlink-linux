@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Updater
+
+- DEB/RPM updates failed with "Failed to obtain authentication": `pkcon --noninteractive` told
+  polkit not to show a password dialog. Hearthlink now installs the package through PackageKit's
+  D-Bus API and lets polkit ask for authorization.
+- Installs from DEB/RPM on 1.4.0 or older still have the old updater: install this release once
+  manually (e.g. `sudo dnf install ./Hearthlink.x86_64.rpm` or `sudo apt install ./Hearthlink.amd64.deb`).
+
 ## 1.4.0 (2026-11-09)
 
 ### Tray
