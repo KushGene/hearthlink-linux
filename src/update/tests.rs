@@ -179,7 +179,9 @@ fn no_downgrade_is_offered() {
     older.version = "0.1.0".into();
     *updates.latest.lock().unwrap() = Some(older);
     assert!(updates.newer().is_none());
-    *updates.latest.lock().unwrap() = Some(release());
+    let mut newer = release();
+    newer.version = "999.0.0".into();
+    *updates.latest.lock().unwrap() = Some(newer);
     assert!(updates.newer().is_some());
 }
 
