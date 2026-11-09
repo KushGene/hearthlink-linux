@@ -1,6 +1,6 @@
 pkgbase = hearthlink-bin
 	pkgdesc = World of Warcraft uploaders for Linux: Wowhead, WowUtils, wowaudit, ForeverDB, ForeverWowCraft and TradeSkillMaster in one tray app
-	pkgver = 1.4.0
+	pkgver = 1.4.1
 	pkgrel = 1
 	url = https://github.com/KushGene/hearthlink-linux
 	arch = x86_64
@@ -19,7 +19,7 @@ pkgbase = hearthlink-bin
 	optdepends = xdg-utils: opening links and folders
 	provides = hearthlink
 	conflicts = hearthlink
-	source = https://github.com/KushGene/hearthlink-linux/releases/download/v1.4.0/hearthlink-1.4.0-x86_64.tar.gz
-	sha256sums = 1dd35ab1921f1889aa5fb247b9ee883f72949034fbc59c9050f3b70a72d71b72
+	source = https://github.com/KushGene/hearthlink-linux/releases/download/v1.4.1/hearthlink-1.4.1-x86_64.tar.gz
+	sha256sums = 683682e639666e4faa8690a5451abc32ec73219abdaa6706907ea1f422eed92c
 
 pkgname = hearthlink-bin
