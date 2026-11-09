@@ -9,7 +9,7 @@ fn temp() -> tempfile::TempDir {
 }
 
 fn release() -> Release {
-    Release { version: "1.4.0".into(), notes: String::new(), assets: vec![Asset { name: "Hearthlink.amd64.deb".into(), sha256: "ab".repeat(32), size: 100 }] }
+    Release { version: "99.0.0".into(), notes: String::new(), assets: vec![Asset { name: "Hearthlink.amd64.deb".into(), sha256: "ab".repeat(32), size: 100 }] }
 }
 
 #[test]

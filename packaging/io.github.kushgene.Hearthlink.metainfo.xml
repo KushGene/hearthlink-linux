@@ -71,6 +71,11 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.4.1" date="2026-11-09">
+      <description>
+        <p>Fixes DEB/RPM updates failing with "Failed to obtain authentication": the update is now installed through PackageKit, which asks for your password. Installs from 1.4.0 or older need to install this release once manually.</p>
+      </description>
+    </release>
     <release version="1.4.0" date="2026-11-09">
       <description>
         <p>New tray menu: a submenu per service with its status, Upload everything now, notification level and autostart. The tray icon shows when a service needs attention.</p>
