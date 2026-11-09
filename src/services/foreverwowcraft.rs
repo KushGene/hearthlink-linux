@@ -149,6 +149,41 @@ fn find_python() -> Result<String, String> {
 }
 
 /// The helper prints `2026-09-30 14:05:09  text` in its send window; the time is ours to add.
+/// The helper's one-line route summary, one realm per line:
+/// "EU PvE (Alliance) (16 routes, 13 with a second profession, scanned 36 min ago), EU PvE (Horde) (…)"
+/// → "EU PvE (Alliance): 16 routes · 13 with a second profession · scanned 36 min ago\n…".
+fn routes_lines(text: &str) -> String {
+    let mut items = Vec::new();
+    let (mut depth, mut start) = (0i32, 0);
+    for (i, ch) in text.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                items.push(&text[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    items.push(&text[start..]);
+    items
+        .iter()
+        .map(|item| {
+            let item = item.trim();
+            // The last bracket holds the details; the realm's own "(Alliance)" stays in the name.
+            match item.strip_suffix(')').and_then(|rest| rest.rfind(" (").map(|i| (&rest[..i], &rest[i + 2..]))) {
+                Some((name, details)) if !name.is_empty() => {
+                    format!("{name}: {}", details.split(", ").collect::<Vec<_>>().join(" · "))
+                }
+                _ => item.to_string(),
+            }
+        })
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn strip_stamp(line: &str) -> &str {
     let b = line.as_bytes();
     let stamped = b.len() > 21
@@ -749,7 +784,7 @@ impl Service for ForeverWowCraft {
                         if cfg.last_sent > 0 { core::ago(cfg.last_sent) } else { "nothing yet".into() },
                         cfg.last_sent_text.clone(),
                     ),
-                    ("Routes", cfg.routes.clone().unwrap_or_else(|| "–".into()), None),
+                    ("Routes", cfg.routes.as_deref().map(routes_lines).unwrap_or_else(|| "–".into()), None),
                 ],
             );
             let folders = i.folders.lock().unwrap().clone();
@@ -934,6 +969,15 @@ mod tests {
         let release = github_release(&http, &url, &url, &Common::default(), Duration::ZERO).unwrap();
         server.join().unwrap();
         assert_eq!(release["tag_name"], "v1");
+    }
+
+    #[test]
+    fn routes_one_realm_per_line() {
+        assert_eq!(
+            routes_lines("EU PvE (Alliance) (16 routes, 13 with a second profession, scanned 36 min ago), EU PvE (Horde) (16 routes, scanned 30 min ago)"),
+            "EU PvE (Alliance): 16 routes · 13 with a second profession · scanned 36 min ago\nEU PvE (Horde): 16 routes · scanned 30 min ago"
+        );
+        assert_eq!(routes_lines("none yet"), "none yet");
     }
 
     #[test]

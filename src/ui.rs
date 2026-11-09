@@ -94,12 +94,15 @@ pub fn hint(ui: &mut egui::Ui, text: &str) {
     ui.add(egui::Label::new(RichText::new(text).small().color(MUTED)).wrap());
 }
 
-/// Name/value rows; a value with a third element shows it on hover.
+/// Name/value rows; a value with a third element shows it on hover. Values with line breaks
+/// are shown whole, one line under the other.
 pub fn facts(ui: &mut egui::Ui, id: &str, rows: &[(&str, String, Option<String>)]) {
     egui::Grid::new(id).num_columns(2).spacing(egui::vec2(18.0, 6.0)).show(ui, |ui| {
         for (key, value, tip) in rows {
             ui.label(RichText::new(*key).color(MUTED));
-            let r = ui.add(egui::Label::new(value.as_str()).truncate());
+            // Several lines (a list) wrap; a single value is cut to the width, whole on hover.
+            let label = egui::Label::new(value.as_str());
+            let r = ui.add(if value.contains('\n') { label.wrap() } else { label.truncate() });
             match tip {
                 Some(t) if t != value => r.on_hover_text(t),
                 _ => r.on_hover_text(value.as_str()),
