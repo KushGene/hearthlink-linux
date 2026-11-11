@@ -1486,7 +1486,7 @@ dependencies = [
 
 [[package]]
 name = "hearthlink"
-version = "1.4.1"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "base64",

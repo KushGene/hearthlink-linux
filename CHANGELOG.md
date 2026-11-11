@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.0 (2026-11-11)
+
+### Goblinwise (new)
+
+- Installs and updates the Goblinwise Ledger addon in WoW Forever (zip from goblinwise.eu,
+  checked against the SHA-256 the site lists).
+- Lets goblinwise.eu/ledger read the addon's SavedVariables from `http://127.0.0.1:47291` while
+  Hearthlink runs. Only the Goblinwise site may read it (CORS allow-list, Host check against DNS
+  rebinding); nothing is sent anywhere. Off until you turn the service on.
+- goblinwise.eu stays allowed while the website setting points at a local test server, so a
+  leftover development setting no longer hides Hearthlink from the site.
+
 ## 1.4.1 (2026-11-09)
 
 ### Updater
