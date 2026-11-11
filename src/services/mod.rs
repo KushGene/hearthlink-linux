@@ -1,5 +1,6 @@
 pub mod foreverdb;
 pub mod foreverwowcraft;
+pub mod goblinwise;
 pub mod tsm;
 pub mod wowaudit;
 pub mod wowhead;
@@ -61,6 +62,7 @@ pub fn all(env: &Arc<Env>) -> Vec<Arc<dyn Service>> {
         Arc::new(wowutils::WowUtils::new(env.clone())),
         Arc::new(wowaudit::WowAudit::new(env.clone())),
         Arc::new(tsm::Tsm::new(env.clone())),
+        Arc::new(goblinwise::Goblinwise::new(env.clone())),
     ]
 }
 

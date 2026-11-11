@@ -32,6 +32,7 @@ keeps the addons up to date.
 | **ForeverDB** | Runs ForeverDB's official uploader for WoW Forever and keeps it up to date |
 | **ForeverWowCraft** | Runs the official ForeverWowCraft Helper: sends auction prices, brings your profession routes into the game |
 | **TradeSkillMaster** | Installs, updates and starts TSM's official Linux app |
+| **Goblinwise** | Installs and updates the Goblinwise Ledger addon (WoW Forever) and lets goblinwise.eu/ledger read your sales, purchases and gold on your computer – nothing is uploaded |
 
 Turn on only the services you use. Already used the Windows Wowhead Client, WowUtils Bridge or
 ForeverWowCraft Helper in Wine? Hearthlink picks up its login and settings.
